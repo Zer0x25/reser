@@ -9,6 +9,8 @@
     "test": "vp run test:unit && vp run test:integration",
     "test:unit": "node --test server/domain.test.mjs shared/time.test.mjs && vp test run src/calendar.test.ts",
     "test:integration": "node --test server/api.test.mjs",
+    "coverage:domain": "node --experimental-test-coverage --test server/domain.test.mjs shared/time.test.mjs",
+    "coverage:calendar": "vp test run --coverage --coverage.include=src/calendar.ts src/calendar.test.ts",
     "e2e": "playwright test",
     "smoke": "playwright test --grep @smoke",
     "e2e:install": "playwright install chromium",
@@ -17,7 +19,9 @@
     "preview": "vp preview"
   },
   "devDependencies": {
+    "@axe-core/playwright": "catalog:",
     "@playwright/test": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
     "typescript": "^7.0.2",
     "vite": "catalog:",
     "vite-plus": "catalog:"

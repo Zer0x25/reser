@@ -11,7 +11,8 @@ El MVP contiene reglas sensibles de disponibilidad, tarifas, autorización e inv
 
 - Mantener `node:test` para dominio y API; las pruebas API levantan el proceso real con SQLite temporal.
 - Usar Vite+ Test/Vitest para cálculos puros de presentación como rangos y zoom del calendario.
-- Usar Playwright/Chromium para un conjunto E2E pequeño que cubra la entrada pública, el acceso de recepción, la activación por teclado y el desplazamiento del calendario a 390 px.
+- Usar Playwright/Chromium para flujos E2E críticos: verificación de correo local, solicitud/aprobación/seguimiento, reserva presencial/check-in, interacción por teclado y calendario a 390 px.
+- Ejecutar axe en las pantallas pública y de tablero para WCAG 2.0/2.1/2.2 A y AA; comprobar que la página no desborde a 768 px y 1024 px.
 - Ejecutar revisión, tipos, pruebas por unidad/integración y build con `ready`; ejecutar E2E en el workflow de calidad de cada push y pull request.
 - Aislar todas las pruebas con fechas fijas o SQLite temporal. No llamar servicios de correo o pago reales.
 - Añadir un caso de regresión cuando se corrige un defecto. Medir cobertura antes de establecer umbrales, priorizando reglas comerciales críticas.
@@ -24,6 +25,8 @@ El MVP contiene reglas sensibles de disponibilidad, tarifas, autorización e inv
 - La base temporal evita contaminar los datos manuales de demo y facilita repetir ejecuciones.
 - `main.ts` no se divide completamente en esta decisión; nuevas extracciones deben responder a un límite funcional probado.
 - El smoke de URL desplegada queda pendiente hasta disponer de una vista previa configurada.
+- Los mensajes de prueba se guardan en un sumidero HTTP de loopback; el E2E no usa proveedores de correo ni pagos.
+- axe reveló contraste insuficiente en la paleta inicial; se ajustaron colores secundarios para conservar la identidad OX y cumplir las comprobaciones de contraste de esas dos pantallas.
 
 ## Alternativas consideradas
 

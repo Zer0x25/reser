@@ -10,16 +10,16 @@ Detectar errores de reglas, integración y UX antes de integrar cambios y repeti
 
 ## Capas y comandos
 
-| Nivel                      | Qué valida                                                                                                                                       | Herramienta / alcance                                                               | Comando                                        |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- | ---------------------------------------------- |
-| Unidad del dominio y fecha | Tarifas, capacidad, agrupación, preparación, bloqueos, alternativas, conversión local y DST.                                                     | `node:test`; funciones puras de `server/domain.mjs` y `shared/time.mjs`.            | `pnpm exec vp run test:unit`.                  |
-| Unidad de presentación     | Navegación de días, rangos, zoom y selección de una franja.                                                                                      | Vite+ Test/Vitest sobre `src/calendar.ts`, sin DOM ni servidor.                     | `pnpm exec vp run test:unit`.                  |
-| Integración/API            | HTTP real con SQLite temporal: roles, disponibilidad, escritura concurrente, idempotencia, correo de desarrollo, pagos manuales y mantenimiento. | `node:test`; cada proceso usa una base en el directorio temporal.                   | `pnpm exec vp run test:integration`.           |
-| E2E navegador              | Carga pública; login de recepción; navegación/zoom; activación por teclado; desplazamiento del calendario a 390 px.                              | Playwright con Chromium, API y Vite reales, base temporal y credenciales solo demo. | `pnpm exec vp run e2e`.                        |
-| Smoke local                | Repite los dos recorridos críticos del navegador con base temporal.                                                                              | Subconjunto Playwright etiquetado `@smoke`.                                         | `pnpm exec vp run smoke`.                      |
-| Smoke de vista previa      | Ejecuta los flujos E2E esenciales contra una URL de vista previa cuando esa infraestructura exista.                                              | Playwright, entorno separado y fixtures aprobadas para test.                        | Aún no existe URL de vista previa configurada. |
+| Nivel                      | Qué valida                                                                                                                                                                                                                                           | Herramienta / alcance                                                                                 | Comando                                        |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| Unidad del dominio y fecha | Tarifas, capacidad, agrupación, preparación, bloqueos, alternativas, conversión local y DST.                                                                                                                                                         | `node:test`; funciones puras de `server/domain.mjs` y `shared/time.mjs`.                              | `pnpm exec vp run test:unit`.                  |
+| Unidad de presentación     | Navegación de días, rangos, zoom y selección de una franja.                                                                                                                                                                                          | Vite+ Test/Vitest sobre `src/calendar.ts`, sin DOM ni servidor.                                       | `pnpm exec vp run test:unit`.                  |
+| Integración/API            | HTTP real con SQLite temporal: roles, disponibilidad, escritura concurrente, idempotencia, correo de desarrollo, pagos manuales y mantenimiento.                                                                                                     | `node:test`; cada proceso usa una base en el directorio temporal.                                     | `pnpm exec vp run test:integration`.           |
+| E2E navegador              | Verificación de correo de prueba, solicitud grande, aprobación de recepción, seguimiento privado, reserva presencial y check-in; navegación por teclado; calendario móvil; disposición a 768/1024 px; axe WCAG 2.2 A/AA en página pública y tablero. | Playwright con Chromium, API y Vite reales, SQLite temporal y correo capturado por un sumidero local. | `pnpm exec vp run e2e`.                        |
+| Smoke local                | Carga pública; navegación/zoom/teclado del calendario de recepción; desplazamiento del calendario a 390 px.                                                                                                                                          | Tres pruebas Playwright etiquetadas `@smoke`.                                                         | `pnpm exec vp run smoke`.                      |
+| Smoke de vista previa      | Ejecuta los flujos E2E esenciales contra una URL de vista previa cuando esa infraestructura exista.                                                                                                                                                  | Playwright, entorno separado y fixtures aprobadas para test.                                          | Aún no existe URL de vista previa configurada. |
 
-`ready` incluye revisión de formato/lint/tipos, todas las pruebas unitarias y de integración, y build. `regression` ejecuta `ready` y E2E. El workflow de GitHub instala Chromium y corre `regression` en cada push y pull request; los dos casos E2E actuales también están etiquetados para el comando corto `smoke`.
+`ready` incluye revisión de formato/lint/tipos, todas las pruebas unitarias y de integración, y build. `regression` ejecuta `ready` y las siete pruebas E2E. El workflow de GitHub instala Chromium y corre `regression` en cada push y pull request. Las tres pruebas etiquetadas `@smoke` forman el comando corto `smoke`.
 
 ## Escenarios críticos
 
@@ -49,12 +49,17 @@ Detectar errores de reglas, integración y UX antes de integrar cambios y repeti
 - El control de rango actualiza el zoom y el indicador visible.
 - Mouse y teclado activan solo el flujo de precarga; el guardado se valida otra vez en servidor.
 - La interfaz consume los límites horarios del tablero y no interpreta reglas semanales en paralelo.
+- El pedido de verificación mantiene nombre, correo y aceptación de condiciones después de redibujar el formulario.
+- La reserva de grupo atraviesa verificación, retención, aprobación humana y seguimiento privado; la reserva presencial atraviesa alta y check-in.
+- axe analiza los criterios WCAG 2.0/2.1/2.2 A y AA en la entrada pública y el tablero de recepción.
+- La página no desborda el ancho del viewport a 768 px y 1024 px; el calendario móvil conserva desplazamiento horizontal propio a 390 px.
 
 ## Fixtures y aislamiento
 
 - Pruebas de dominio usan objetos inline pequeños con fecha fija.
 - Pruebas API crean un SQLite nuevo por proceso y lo eliminan en teardown.
 - Playwright establece su propio `DATABASE_PATH` en temporales; las cuentas y tarifas son demo y sus emails usan `.test`.
+- Playwright levanta un servicio local de correo falso en `127.0.0.1:3002`; ningún correo de prueba sale del equipo.
 - La semilla de demo de uso manual sigue en `apps/website/data/demo.sqlite`; ninguna prueba lee ni modifica esa base.
 - La API y el navegador se levantan localmente; no se conectan a correo productivo, pago, ni base remota.
 
@@ -72,7 +77,9 @@ Playwright conserva trazas y capturas solo ante fallos. Los resultados CI bloque
 
 ## Cobertura pendiente
 
-- Flujos de solicitud con aceptación y cancelación en navegador.
-- Acciones de recepción para aprobación, check-in y extensión.
-- Vista móvil en más tamaños y chequeos automatizados de accesibilidad.
+- Cobertura dirigida disponible: `pnpm exec vp run coverage:domain` mide el dominio y tiempo con `node:test`; `pnpm exec vp run coverage:calendar` mide el módulo puro de calendario con V8. La última medición fue 88.07% líneas, 81.76% ramas y 95.35% funciones para dominio/tiempo; `calendar.ts` quedó en 100% en las tres métricas. No es una cifra global de API y UI.
+- Aún no hay instrumentación unificada de cobertura de rutas HTTP y vistas ni umbral global; primero conviene cubrir las transiciones comerciales que faltan.
+- Cancelación, renovación del enlace y aceptación de precio en navegador; el pago sigue siendo manual.
+- Extensión y otras acciones de recepción que cambian una reserva.
+- axe solo cubre la entrada pública y el tablero inicial; faltan formularios, modales, solicitudes y más tamaños móviles.
 - Smoke autenticado de una URL de vista previa después de elegir proveedor de hosting.

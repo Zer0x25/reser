@@ -60,6 +60,10 @@ const state: any = {
   separated: false,
   options: [] as Option[],
   selected: null as Option | null,
+  requestName: "",
+  requestEmail: "",
+  verificationCode: "",
+  requestTermsAccepted: false,
   verifiedEmail: "",
   proof: "",
   requestKey: randomIdempotencyKey(),
@@ -177,7 +181,7 @@ function renderRequestForm() {
     state.options.filter((option: Option) => option.startAt === o.startAt).length > 1
       ? ` · ${o.utcOffset}`
       : "";
-  return `<section class="request-card"><button class="close" data-action="clear-selection" aria-label="Cerrar">×</button><div class="panel-title"><div><span class="eyebrow">TU OPCIÓN ELEGIDA</span><h3>${esc(o.startTime)}${esc(offset)} — ${esc(o.endTime)}</h3><p>${o.laneCount} ${o.laneCount === 1 ? "pista" : "pistas"} · ${state.duration / 60} h · ${state.players} jugadores</p></div><div class="total"><small>Total</small><b>${priceConfigured ? money(o.quote.totalClp) : "Por configurar"}</b><small>${state.config?.demoMode ? "precio ilustrativo" : "CLP"}</small></div></div><form id="request"><div class="two-fields"><label>Nombre del responsable<input name="name" autocomplete="name" required maxlength="120" placeholder="Tu nombre"></label><label>Correo electrónico<input name="email" type="email" autocomplete="email" required value="${esc(state.verifiedEmail)}" placeholder="nombre@correo.cl"></label></div><div class="verify-row"><span>✉ <b>Verifica tu correo</b><small>Enviamos un código de seis dígitos. Todavía no retenemos pistas.</small></span><button type="button" class="button outline" data-action="send-code">Enviar código</button></div><div class="code-row"><label>Código de verificación<input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000" ${state.proof ? "disabled" : ""}></label><button type="button" class="button outline" data-action="verify" ${state.proof ? "disabled" : ""}>${state.proof ? "Correo verificado ✓" : "Verificar correo"}</button></div>${state.proof ? `<p class="verified">✓ Correo verificado para ${esc(state.verifiedEmail)}. Comprobaremos disponibilidad al enviar.</p>` : ""}${!priceConfigured ? `<p class="verified">Recepción debe configurar una tarifa antes de aceptar reservas.</p>` : ""}<label class="accept"><input name="terms" type="checkbox" required><span>Acepto la tarifa, el horario y las condiciones. Un grupo grande puede requerir aprobación de recepción.</span></label><button class="button primary submit" ${state.proof && priceConfigured ? "" : "disabled"}>${o.laneCount >= 3 ? "Solicitar aprobación" : "Reservar este horario"} →</button><small class="privacy">🔒 Sin cuenta. El enlace de seguimiento solo da acceso a esta reserva.</small></form></section>`;
+  return `<section class="request-card"><button class="close" data-action="clear-selection" aria-label="Cerrar">×</button><div class="panel-title"><div><span class="eyebrow">TU OPCIÓN ELEGIDA</span><h3>${esc(o.startTime)}${esc(offset)} — ${esc(o.endTime)}</h3><p>${o.laneCount} ${o.laneCount === 1 ? "pista" : "pistas"} · ${state.duration / 60} h · ${state.players} jugadores</p></div><div class="total"><small>Total</small><b>${priceConfigured ? money(o.quote.totalClp) : "Por configurar"}</b><small>${state.config?.demoMode ? "precio ilustrativo" : "CLP"}</small></div></div><form id="request"><div class="two-fields"><label>Nombre del responsable<input name="name" autocomplete="name" required maxlength="120" value="${esc(state.requestName)}" placeholder="Tu nombre"></label><label>Correo electrónico<input name="email" type="email" autocomplete="email" required value="${esc(state.requestEmail || state.verifiedEmail)}" placeholder="nombre@correo.cl"></label></div><div class="verify-row"><span>✉ <b>Verifica tu correo</b><small>Enviamos un código de seis dígitos. Todavía no retenemos pistas.</small></span><button type="button" class="button outline" data-action="send-code">Enviar código</button></div><div class="code-row"><label>Código de verificación<input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" value="${esc(state.verificationCode)}" placeholder="000000" ${state.proof ? "disabled" : ""}></label><button type="button" class="button outline" data-action="verify" ${state.proof ? "disabled" : ""}>${state.proof ? "Correo verificado ✓" : "Verificar correo"}</button></div>${state.proof ? `<p class="verified">✓ Correo verificado para ${esc(state.verifiedEmail)}. Comprobaremos disponibilidad al enviar.</p>` : ""}${!priceConfigured ? `<p class="verified">Recepción debe configurar una tarifa antes de aceptar reservas.</p>` : ""}<label class="accept"><input name="terms" type="checkbox" ${state.requestTermsAccepted ? "checked" : ""} required><span>Acepto la tarifa, el horario y las condiciones. Un grupo grande puede requerir aprobación de recepción.</span></label><button class="button primary submit" ${state.proof && priceConfigured ? "" : "disabled"}>${o.laneCount >= 3 ? "Solicitar aprobación" : "Reservar este horario"} →</button><small class="privacy">🔒 Sin cuenta. El enlace de seguimiento solo da acceso a esta reserva.</small></form></section>`;
 }
 function renderResult() {
   const r = state.result;
@@ -497,6 +501,10 @@ app.addEventListener("submit", async (event) => {
     }
     if (form.id === "request") {
       const email = v("email").toLowerCase();
+      state.requestName = v("name");
+      state.requestEmail = v("email");
+      state.verificationCode = v("code");
+      state.requestTermsAccepted = d.has("terms");
       if (!state.proof || state.verifiedEmail !== email)
         throw new Error("Verifica el correo que aparece en el formulario.");
       const result = await api<any>("/api/requests", {
@@ -519,6 +527,10 @@ app.addEventListener("submit", async (event) => {
       state.requestKey = randomIdempotencyKey();
       state.selected = null;
       state.proof = "";
+      state.requestName = "";
+      state.requestEmail = "";
+      state.verificationCode = "";
+      state.requestTermsAccepted = false;
       say(
         result.status === "confirmed"
           ? "Tu reserva quedó confirmada."
@@ -767,8 +779,17 @@ app.addEventListener("submit", async (event) => {
     render();
   }
 });
+app.addEventListener("input", (event) => {
+  const input = event.target as HTMLInputElement;
+  if (input.form?.id !== "request") return;
+  if (input.name === "name") state.requestName = input.value;
+  if (input.name === "email") state.requestEmail = input.value;
+  if (input.name === "code") state.verificationCode = input.value;
+});
 app.addEventListener("change", (event) => {
   const input = event.target as HTMLInputElement;
+  if (input.form?.id === "request" && input.name === "terms")
+    state.requestTermsAccepted = input.checked;
   if (input.name === "board-date") void loadStaff(input.value);
   if (input.name === "startAt") {
     const exactStart = document.querySelector<HTMLInputElement>('#manual [name="startMs"]');
@@ -891,6 +912,10 @@ app.addEventListener("click", async (event) => {
       );
       state.proof = "";
       state.verifiedEmail = "";
+      state.requestName = "";
+      state.requestEmail = "";
+      state.verificationCode = "";
+      state.requestTermsAccepted = false;
       state.result = null;
       state.requestKey = randomIdempotencyKey();
       render();
@@ -899,12 +924,20 @@ app.addEventListener("click", async (event) => {
     if (action === "clear-selection") {
       state.selected = null;
       state.proof = "";
+      state.requestName = "";
+      state.requestEmail = "";
+      state.verificationCode = "";
+      state.requestTermsAccepted = false;
       render();
     }
     if (action === "send-code") {
       const d = new FormData(document.querySelector<HTMLFormElement>("#request")!);
       const email = fieldValue(d.get("email"));
       if (!email) throw new Error("Ingresa un correo primero.");
+      state.requestName = fieldValue(d.get("name"));
+      state.requestEmail = email;
+      state.verificationCode = fieldValue(d.get("code"));
+      state.requestTermsAccepted = d.has("terms");
       await api("/api/email/start", { method: "POST", body: JSON.stringify({ email }) });
       say(
         state.config?.demoMode
@@ -947,6 +980,10 @@ app.addEventListener("click", async (event) => {
     if (action === "verify") {
       const d = new FormData(document.querySelector<HTMLFormElement>("#request")!);
       const email = fieldValue(d.get("email")).toLowerCase();
+      state.requestName = fieldValue(d.get("name"));
+      state.requestEmail = fieldValue(d.get("email"));
+      state.verificationCode = fieldValue(d.get("code"));
+      state.requestTermsAccepted = d.has("terms");
       const r = await api<any>("/api/email/complete", {
         method: "POST",
         body: JSON.stringify({ email, code: fieldValue(d.get("code")) }),

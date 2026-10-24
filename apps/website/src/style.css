@@ -1877,7 +1877,7 @@ footer b {
   color: #252525;
   background: #ede9de;
   --ink: #252525;
-  --muted: #706b68;
+  --muted: #5c5754;
   --line: #e5dfd6;
   --green: #aa0737;
   --mint: #fbeaf0;
@@ -1910,7 +1910,7 @@ select:focus-visible {
 }
 .brand-mark {
   border-radius: 10px;
-  background: var(--ox-pink);
+  background: var(--ox-burgundy);
   color: #fff;
   font-size: 12px;
   font-weight: 900;
@@ -1918,6 +1918,9 @@ select:focus-visible {
 }
 .topbar nav button.active {
   color: #fff;
+}
+.topbar nav button {
+  color: #d4ceca;
 }
 .topbar nav button.active:after {
   background: var(--ox-pink);
@@ -1964,6 +1967,9 @@ select:focus-visible {
 .hero-facts b {
   color: var(--ox-burgundy);
 }
+.hero-facts {
+  color: #4c5c56;
+}
 .hero-visual {
   border-radius: 24px;
   background: linear-gradient(145deg, #252525 0%, #6d082d 48%, #ff0b53 100%);
@@ -1993,6 +1999,9 @@ select:focus-visible {
 .steps b {
   background: #fbeaf0;
   color: var(--ox-burgundy);
+}
+.steps {
+  color: #5f676e;
 }
 .booking-card {
   border-color: #e4ddd4;
@@ -2032,8 +2041,14 @@ select:focus-visible {
   background: #fbeaf0;
   color: var(--ox-burgundy);
 }
+.how-cards article > b {
+  color: #626d66;
+}
 .venue-strip {
   background: #fbeaf0;
+}
+.venue-strip small {
+  color: #55625b;
 }
 .venue-strip > span {
   color: var(--ox-pink);
@@ -2042,17 +2057,30 @@ select:focus-visible {
 footer b {
   color: var(--ox-burgundy);
 }
+footer {
+  color: #5e6a64;
+}
 .login-side {
   background: #fbeaf0;
 }
 .staff-tabs {
   background: #e4ded7;
 }
+.staff-tabs button {
+  color: #505a55;
+}
 .staff-tabs button.current {
   color: var(--ox-burgundy);
 }
 .metrics b {
   color: var(--ox-burgundy);
+}
+.metrics small,
+.legend,
+.hours,
+.lane-label small,
+.board-note {
+  color: #58635d;
 }
 .lane-label > b {
   background: #fbeaf0;

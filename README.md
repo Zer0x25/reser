@@ -35,7 +35,9 @@ pnpm exec vp run e2e
 pnpm exec vp run regression
 ```
 
-`test:unit` y `test:integration` ejecutan cada capa por separado. `ready` suma formato, lint, tipos y compilación. Usa `e2e:install` una vez para instalar Chromium. `smoke` corre los dos flujos críticos de navegador; `e2e` ejecuta la suite E2E completa y `regression` corre todas las verificaciones antes de integrar un cambio. Las pruebas de API y E2E usan bases SQLite temporales y no modifican el archivo de demostración.
+`test:unit` y `test:integration` ejecutan cada capa por separado. `ready` suma formato, lint, tipos y compilación. Usa `e2e:install` una vez para instalar Chromium. `smoke` corre tres verificaciones rápidas de navegador; `e2e` ejecuta siete pruebas, incluidos solicitud/aprobación, check-in, axe y tamaños tablet/laptop; `regression` corre todas las verificaciones antes de integrar un cambio. Las pruebas de API y E2E usan bases SQLite temporales y no modifican el archivo de demostración. El correo de prueba se captura en un servicio local.
+
+Para cobertura dirigida ejecuta `pnpm exec vp run coverage:domain` y `pnpm exec vp run coverage:calendar`. La cobertura de dominio/tiempo es 88.07% líneas, 81.76% ramas y 95.35% funciones; `calendar.ts` marca 100% en las tres métricas. No representan cobertura global de la API ni de la interfaz.
 
 La estrategia por niveles, escenarios críticos, aislamiento y pendientes está en [`docs/testing/strategy.md`](docs/testing/strategy.md). La arquitectura y límites entre UI, dominio, API y persistencia están en [`docs/design/system-design.md`](docs/design/system-design.md).
 
@@ -104,7 +106,7 @@ La optimización utiliza una puntuación de escenarios de demanda y una búsqued
 - La ficha y el tablero no incluyen todos los indicadores históricos de ocupación, fragmentación, conversión e ingresos solicitados. Los indicadores presentes usan registros reales.
 - La forma física del salón comienza con la distribución supuesta 2 × 6; la administración todavía no edita coordenadas o adyacencias.
 - La cola de correo reintenta cada 30 segundos mientras el proceso está activo. Para varios procesos API se debe añadir coordinación de trabajadores antes del despliegue horizontal.
-- La suite E2E de navegador cubre la entrada pública y recepción con navegación, zoom, teclado y desplazamiento móvil a 390 px. Aún faltan recorridos E2E de solicitud web, aprobación, check-in y más tamaños móviles.
+- La suite E2E cubre solicitud/aprobación/seguimiento, check-in, navegación por teclado, móvil a 390 px y disposición a 768/1024 px. axe comprueba la entrada pública y el tablero; faltan cancelación, extensión, aceptación de precio, más estados de accesibilidad y smoke de una URL de vista previa.
 
 La especificación inicial completa se conserva en [`docs/product/initial-one-shot-implementation-prompt.md`](docs/product/initial-one-shot-implementation-prompt.md). Este README describe el estado actual y sus límites; el prompt define el alcance funcional objetivo.
 

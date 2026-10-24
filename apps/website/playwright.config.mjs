@@ -37,9 +37,9 @@ export default defineConfig({
   },
   webServer: {
     command:
-      "node server/index.mjs & API_PID=$!; trap 'kill $API_PID 2>/dev/null || true' EXIT; ./node_modules/.bin/vp dev --host 127.0.0.1",
+      "node e2e/mail-sink.mjs & MAIL_SINK_PID=$!; node server/index.mjs & API_PID=$!; trap 'kill $API_PID $MAIL_SINK_PID 2>/dev/null || true' EXIT; ./node_modules/.bin/vp dev --host 127.0.0.1",
     url: "http://127.0.0.1:5173",
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: false,
     stdout: "pipe",
     stderr: "pipe",
     timeout: 60_000,
@@ -49,6 +49,10 @@ export default defineConfig({
       NODE_ENV: "development",
       PORT: "3001",
       TOKEN_SECRET: "playwright-demo-secret-with-at-least-32-bytes",
+      MAIL_DELIVERY_URL: "http://127.0.0.1:3002/deliver",
+      MAIL_DELIVERY_TOKEN: "e2e-mail-token",
+      MAIL_FROM: "reservas@e2e.example.test",
+      PUBLIC_APP_URL: "http://127.0.0.1:5173",
     },
   },
 });

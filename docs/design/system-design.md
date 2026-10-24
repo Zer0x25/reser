@@ -91,10 +91,10 @@ La estrategia operativa está en [Testing strategy](../testing/strategy.md). La 
 1. **Unidad de dominio y tiempo:** calendario local, DST, reglas de capacidad, tarifas, agrupación y disponibilidad.
 2. **Unidad de presentación:** cálculos puros del calendario que no requieren DOM.
 3. **Integración API:** SQLite aislado, autenticación, roles, idempotencia, concurrencia, pago manual y bloqueos.
-4. **E2E navegador:** entrada pública, acceso de recepción, navegación/zoom del calendario y precarga de una reserva con teclado.
-5. **Smoke:** el mismo recorrido de recepción sirve como verificación rápida antes de promover una vista previa.
+4. **E2E navegador:** verificación de correo simulada, solicitud de grupo, aprobación y seguimiento; reserva presencial/check-in; calendario por teclado y móvil; disposición tablet/laptop; axe para entrada pública y tablero.
+5. **Smoke:** carga pública, navegación/zoom/teclado del calendario y desplazamiento a 390 px. No hay smoke de vista previa hasta configurar hosting.
 
-No se fija un porcentaje global de cobertura hasta tener una medición estable. Las reglas de inventario, autorización y dinero se cubren por comportamiento y ramas críticas; cada defecto corregido agrega una regresión reproducible.
+La cobertura dirigida disponible es 88.07% de líneas, 81.76% de ramas y 95.35% de funciones para dominio/tiempo; `calendar.ts` registra 100% en las tres métricas. No hay una cifra global porque la API HTTP y las vistas no están instrumentadas en estos reportes. No se fija un umbral global hasta tener esa línea base. axe automatiza criterios WCAG en dos pantallas; no reemplaza una revisión manual con teclado y lector de pantalla ni cubre todos los estados.
 
 ## Despliegue y operación
 
@@ -110,6 +110,6 @@ La producción empieza cerrada si no hay horarios, tarifas, cuenta de administra
 ## Límites conocidos
 
 - La interfaz principal todavía mantiene varias vistas y su estado en `main.ts`; la separación actual es incremental.
-- E2E cubre el recorrido base y calendario, no todos los cambios de estado, clientes móviles ni todos los tamaños de pantalla.
+- E2E cubre solicitud/aprobación, reserva presencial/check-in y calendario, pero aún faltan cancelación, extensión, aceptación de precio, modales y otros anchos móviles.
 - El optimizador es una heurística determinista acotada; no prueba un óptimo global.
 - No se ejecutan cobros ni devoluciones y no se automatizan políticas comerciales aún no definidas.
