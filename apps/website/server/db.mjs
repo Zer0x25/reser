@@ -47,6 +47,7 @@ const defaults = {
     maximumAdvanceDays: 60,
     lateArrivalToleranceMinutes: 10,
     operationalLockMinutes: 60,
+    calendarHourWidthPx: 60,
     weeklyHours: demoMode
       ? DEMO_HOURS
       : Object.fromEntries(Array.from({ length: 7 }, (_, day) => [String(day), { closed: true }])),

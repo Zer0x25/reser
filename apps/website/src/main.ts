@@ -18,6 +18,27 @@ type Option = {
 type User = { id: string; email: string; name: string; role: "reception" | "admin" };
 const app = document.querySelector<HTMLDivElement>("#app")!;
 const days = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
+function randomIdempotencyKey() {
+  const cryptoApi = globalThis.crypto;
+  if (typeof cryptoApi?.randomUUID === "function") return cryptoApi.randomUUID();
+  const bytes = new Uint8Array(16);
+  if (typeof cryptoApi?.getRandomValues === "function") {
+    cryptoApi.getRandomValues(bytes);
+  } else {
+    for (let index = 0; index < bytes.length; index++)
+      bytes[index] = Math.floor(Math.random() * 256);
+  }
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+const calendarRanges = [
+  { value: "total", label: "Total", hours: null },
+  { value: "8", label: "8 h", hours: 8 },
+  { value: "6", label: "6 h", hours: 6 },
+  { value: "4", label: "4 h", hours: 4 },
+] as const;
 const state: any = {
   config: null,
   view: "book",
@@ -32,7 +53,7 @@ const state: any = {
   selected: null as Option | null,
   verifiedEmail: "",
   proof: "",
-  requestKey: crypto.randomUUID(),
+  requestKey: randomIdempotencyKey(),
   result: null,
   manageToken: new URLSearchParams(location.search).get("token"),
   managed: null,
@@ -43,6 +64,9 @@ const state: any = {
   board: null,
   requests: [],
   settings: null,
+  calendarZoomPx: null as number | null,
+  calendarZoomCustomized: false,
+  calendarRange: "total",
   audit: [],
   outbox: [],
   message: "",
@@ -234,7 +258,7 @@ function renderStaff() {
   const tabs = `<nav class="staff-tabs"><button data-action="page" data-page="board" class="${state.page === "board" ? "current" : ""}">▦ Tablero</button><button data-action="page" data-page="requests" class="${state.page === "requests" ? "current" : ""}">◷ Solicitudes ${state.requests.length ? `<i>${state.requests.length}</i>` : ""}</button><button data-action="page" data-page="new" class="${state.page === "new" ? "current" : ""}">＋ Nueva reserva</button>${state.user.role === "admin" ? `<button data-action="page" data-page="settings" class="${state.page === "settings" ? "current" : ""}">⚙ Administración</button>` : ""}</nav>`;
   const dateControl =
     state.page === "board"
-      ? `<div class="staff-day-nav"><button class="button outline small" type="button" data-action="board-shift" data-days="-1" aria-label="Día anterior">←</button><button class="button outline small" type="button" data-action="board-today">Hoy</button><label>Fecha<input type="date" name="board-date" value="${esc(state.board?.date ?? localDate(Date.now()))}"></label><button class="button outline small" type="button" data-action="board-shift" data-days="1" aria-label="Día siguiente">→</button></div>`
+      ? ""
       : `<label>Fecha<input type="date" name="board-date" value="${esc(state.board?.date ?? localDate(Date.now()))}"></label>`;
   const content =
     state.page === "board"
@@ -253,8 +277,20 @@ function renderBoard() {
   const bookings = state.board.reservations;
   const metrics = `<div class="metrics"><article><small>Reservas del día</small><b>${bookings.length}</b></article><article><small>Pistas comprometidas</small><b>${bookings.reduce((a: number, b: any) => a + b.laneCount, 0)} <small>/ 12</small></b></article><article><small>Solicitudes pendientes</small><b>${state.requests.length}</b></article><article><small>Bloqueos activos</small><b>${state.board.blocks.length}</b></article></div>`;
   const spanMinutes = (state.board.axisEndMs - state.board.axisStartMs) / 60_000;
-  const tickOffsets = Array.from({ length: Math.floor(spanMinutes / 180) + 1 }, (_, i) => i * 180);
+  const zoomPx = Math.max(
+    12,
+    Math.min(300, state.calendarZoomPx ?? state.board.calendarHourWidthPx ?? 60),
+  );
+  const tickMinutes = zoomPx >= 84 ? 60 : zoomPx >= 48 ? 120 : zoomPx >= 24 ? 180 : 360;
+  const currentRangeLabel =
+    calendarRanges.find((range) => range.value === state.calendarRange)?.label ?? "Total";
+  const dateNavigation = `<div class="calendar-day-actions" role="group" aria-label="Navegación por fecha"><button class="button outline small" type="button" data-action="board-shift" data-days="-1" aria-label="Día anterior">←</button><button class="button outline small" type="button" data-action="board-today">Hoy</button><button class="button outline small" type="button" data-action="board-shift" data-days="1" aria-label="Día siguiente">→</button></div><label class="calendar-date-picker">Fecha<input type="date" name="board-date" value="${esc(state.board.date)}"></label>`;
+  const tickOffsets = [0];
+  for (let offset = tickMinutes; offset < spanMinutes; offset += tickMinutes)
+    tickOffsets.push(offset);
   if (tickOffsets.at(-1) !== spanMinutes) tickOffsets.push(spanMinutes);
+  const timelineWidth = Math.max(1, Math.ceil((spanMinutes / 60) * zoomPx));
+  const dateSuffix = localDate(state.board.axisEndMs) !== state.board.date ? " +1 d" : "";
   const startCounts = new Map<string, number>();
   for (const booking of bookings) {
     const label = time(booking.start);
@@ -264,6 +300,12 @@ function renderBoard() {
     [...startCounts].filter(([, count]) => count > 1).map(([label]) => label),
   );
   const axisMinute = (ms: number) => (ms - state.board.axisStartMs) / 60_000;
+  const laneLabels = state.board.lanes
+    .map(
+      (lane: any) =>
+        `<div class="lane-label"><b>${lane.id}</b><span>Pista ${lane.id}</span><small>pareja ${lane.pair_id}</small></div>`,
+    )
+    .join("");
   const rows = state.board.lanes
     .map((lane: any) => {
       const events = bookings
@@ -286,29 +328,29 @@ function renderBoard() {
           return `<span class="event blocked" data-action="blocked-slot" style="left:${(start / spanMinutes) * 100}%;width:${Math.max(0, ((end - start) / spanMinutes) * 100)}%" title="${esc(block.reason)}">Bloqueo</span>`;
         })
         .join("");
-      return `<div class="lane-row"><div class="lane-label"><b>${lane.id}</b><span>Pista ${lane.id}</span><small>pareja ${lane.pair_id}</small></div><div class="track" data-action="calendar-slot" data-date="${esc(state.board.date)}" data-axis-start="${state.board.axisStartMs}" data-axis-end="${state.board.axisEndMs}" style="--tick:${(180 / spanMinutes) * 100}%" role="group" tabindex="0" aria-label="Pista ${lane.id}: selecciona un horario libre para iniciar una reserva">${blocks}${events}</div></div>`;
+      return `<div class="track" data-action="calendar-slot" data-date="${esc(state.board.date)}" data-axis-start="${state.board.axisStartMs}" data-axis-end="${state.board.axisEndMs}" style="--tick:${(zoomPx * tickMinutes) / 60}px" role="group" tabindex="0" aria-label="Pista ${lane.id}: selecciona un horario libre para iniciar una reserva">${blocks}${events}</div>`;
     })
     .join("");
   const ticks = tickOffsets
     .map(
       (offset) =>
-        `<span style="left:${(offset / spanMinutes) * 100}%">${time(state.board.axisStartMs + offset * 60_000)}${offset === spanMinutes ? " +1 d" : ""}</span>`,
+        `<span style="left:${(offset / spanMinutes) * 100}%">${time(state.board.axisStartMs + offset * 60_000)}${offset === spanMinutes ? dateSuffix : ""}</span>`,
     )
     .join("");
-  return `<div class="metrics-wrap">${metrics}</div><section class="board-card"><div class="panel-title"><div><h2>Ocupación de pistas</h2><p>${esc(dateText(state.board.date))} · intervalos reales en hora de Santiago</p></div><div class="board-tools"><div class="legend"><span>● Confirmada</span><span>● Retenida</span><span>● Bloqueada</span></div><button class="button outline small" data-action="reoptimize">Reorganizar asignaciones flexibles</button></div></div><div class="calendar-hint"><b>＋ Reserva desde el calendario</b><span>Haz clic en una franja de atención libre para iniciar una reserva con día y hora precargados. Confirmaremos disponibilidad al guardarla.</span></div><div class="board-scroll"><div class="hours"><div></div><div class="hour-track">${ticks}</div></div>${rows}</div><small class="board-note">La reorganización fija fecha, hora, duración y pistas contratadas; excluye reservas en preparación, check-in, curso o bloqueo operacional.</small></section><section class="plain-card maintenance-panel"><div class="panel-title"><div><h2>Mantenimiento y bloqueos</h2><p>Un bloqueo nuevo no puede desplazar una reserva ya comprometida.</p></div></div><form id="block-form" class="block-form"><label>Pista<select name="laneId"><option value="">Todas las pistas</option>${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}">Pista ${i + 1}</option>`).join("")}</select></label><label>Desde · hora de Santiago<input name="start" type="datetime-local" step="600" value="${esc(state.board.date)}T18:00" required></label><label>Hasta · hora de Santiago<input name="end" type="datetime-local" step="600" value="${esc(state.board.date)}T19:00" required></label><label>Motivo<input name="reason" maxlength="250" required placeholder="Inspección de pista"></label><button class="button outline">＋ Crear bloqueo</button></form>${state.board.blocks.length ? `<div class="block-list">${state.board.blocks.map((block: any) => `<div class="rate-row"><span><b>${block.laneId ? `Pista ${block.laneId}` : "Todas las pistas"} · ${time(block.start)}–${time(block.end)}</b><small>${esc(block.reason)}</small></span><button data-action="release-block" data-id="${esc(block.id)}">Liberar</button></div>`).join("")}</div>` : ""}</section>`;
+  return `<div class="metrics-wrap">${metrics}</div><section class="board-card"><div class="panel-title"><div><h2>Ocupación de pistas</h2><p>${esc(dateText(state.board.date))} · intervalos reales en hora de Santiago</p></div><div class="board-tools"><div class="legend"><span>● Confirmada</span><span>● Retenida</span><span>● Bloqueada</span></div><button class="button outline small" data-action="reoptimize">Reorganizar asignaciones flexibles</button></div></div><div class="calendar-hint"><b>＋ Reserva desde el calendario</b><span>Haz clic en una franja de atención libre para iniciar una reserva con día y hora precargados. Confirmaremos disponibilidad al guardarla.</span></div><div class="calendar-table" style="--calendar-width:${timelineWidth}px"><div class="calendar-sticky-header"><div class="calendar-controls">${dateNavigation}<div class="calendar-zoom" role="group" aria-label="Navegación y zoom horizontal del calendario"><button class="button outline small" type="button" data-action="calendar-scroll" data-direction="left" aria-label="Mostrar horas anteriores">‹</button><button class="button outline small" type="button" data-action="calendar-range-step" data-direction="previous" aria-label="Rango visible anterior">−</button><button type="button" class="calendar-range-button" data-action="calendar-range-cycle" aria-pressed="true" aria-label="Rango visible: ${esc(currentRangeLabel)}. Clic para cambiar" title="Clic para cambiar el rango"><span class="calendar-range-label">${currentRangeLabel}</span><span aria-hidden="true">↻</span></button><button class="button outline small" type="button" data-action="calendar-range-step" data-direction="next" aria-label="Rango visible siguiente">＋</button><button class="button outline small" type="button" data-action="calendar-scroll" data-direction="right" aria-label="Mostrar horas siguientes">›</button></div></div><div class="calendar-axis-spacer" aria-hidden="true"></div><div class="calendar-axis-viewport"><div class="hours"><div class="hour-track">${ticks}</div></div></div></div><div class="calendar-grid"><div class="lane-label-column">${laneLabels}</div><div class="board-scroll">${rows}</div></div></div><small class="board-note">La reorganización fija fecha, hora, duración y pistas contratadas; excluye reservas en preparación, check-in, curso o bloqueo operacional.</small></section><section class="plain-card maintenance-panel"><div class="panel-title"><div><h2>Mantenimiento y bloqueos</h2><p>Un bloqueo nuevo no puede desplazar una reserva ya comprometida.</p></div></div><form id="block-form" class="block-form"><label>Pista<select name="laneId"><option value="">Todas las pistas</option>${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}">Pista ${i + 1}</option>`).join("")}</select></label><label>Desde · hora de Santiago<input name="start" type="datetime-local" step="600" value="${esc(state.board.date)}T18:00" required></label><label>Hasta · hora de Santiago<input name="end" type="datetime-local" step="600" value="${esc(state.board.date)}T19:00" required></label><label>Motivo<input name="reason" maxlength="250" required placeholder="Inspección de pista"></label><button class="button outline">＋ Crear bloqueo</button></form>${state.board.blocks.length ? `<div class="block-list">${state.board.blocks.map((block: any) => `<div class="rate-row"><span><b>${block.laneId ? `Pista ${block.laneId}` : "Todas las pistas"} · ${time(block.start)}–${time(block.end)}</b><small>${esc(block.reason)}</small></span><button data-action="release-block" data-id="${esc(block.id)}">Liberar</button></div>`).join("")}</div>` : ""}</section>`;
 }
 function renderRequests() {
   return `<section class="plain-card"><div class="panel-title"><div><h2>En espera de decisión</h2><p>La solicitud de aprobación conserva las pistas hasta que se resuelva.</p></div><span class="pill">${state.requests.length} pendientes</span></div>${state.requests.length ? state.requests.map((r: any) => `<article class="staff-request"><span class="avatar">${esc(r.name.slice(0, 1))}</span><div><b>${esc(r.name)} <small>${esc(r.code)}</small></b><p>${esc(r.email)} · ${r.players} jugadores · ${r.laneCount} pistas ${r.grouped ? "juntas" : "separadas"}</p><small>${esc(dateText(localDate(r.start)))} · ${time(r.start)}–${time(r.end)}</small><p class="request-status">${r.status === "pending_price_acceptance" ? `Precio por aceptar: ${money(r.updatedQuoteClp)}` : `Retenida · ${money(r.quoteClp)}`}</p></div><div class="actions">${r.status === "pending_approval" ? `<button class="button primary small" data-action="approve" data-id="${esc(r.id)}">Aprobar</button>` : `<span class="tag amber">Precio pendiente</span>`}<button class="button ghost small" data-action="reject" data-id="${esc(r.id)}">Rechazar</button></div></article>`).join("") : `<div class="empty"><b>✓</b><h3>Todo al día</h3><p>No hay solicitudes pendientes de revisión.</p></div>`}</section>`;
 }
 function renderNewBooking() {
-  state.manualKey ??= crypto.randomUUID();
+  state.manualKey ??= randomIdempotencyKey();
   const startAt = state.manualStartAt ?? `${state.board?.date ?? state.date}T18:00`;
   return `<section class="new-grid"><div class="plain-card"><span class="eyebrow">RESERVA INTERNA</span><h2>Atención rápida,<br><em>espacio asegurado.</em></h2><p>Teléfono requiere nombre y teléfono. Una reserva presencial futura requiere nombre y un medio de contacto. Inmediata: solo responsable.</p><div class="callout"><b>${state.config?.demoMode ? "Precio de demostración" : state.config?.rateConfigured ? "Tarifa vigente" : "Tarifa pendiente"}</b><span>${state.config?.demoMode ? "No usar para cobro real." : state.config?.rateConfigured ? "El precio se calculará en el momento de guardar." : "Configura una tarifa antes de crear reservas."}</span></div></div><div class="plain-card"><h3>Datos de la reserva</h3><form id="manual"><input type="hidden" name="startMs" value="${state.manualStartMs ?? ""}"><label>Canal<select name="channel"><option value="walk_in">Presencial inmediata</option><option value="phone">Teléfono</option><option value="counter_future">Presencial futura</option></select></label><div class="two-fields"><label>Nombre responsable<input name="name" required maxlength="120"></label><label>Teléfono<input name="phone" type="tel" maxlength="30"></label><label>Correo<input name="email" type="email" maxlength="254"></label><label>Jugadores<input name="players" type="number" min="1" max="72" value="4" required></label><label>Inicio · hora de Santiago<input name="startAt" type="datetime-local" step="600" value="${esc(startAt)}" required></label><label>Duración<select name="duration">${[60, 120, 180, 240].map((n) => `<option value="${n}">${n / 60} ${n === 60 ? "hora" : "horas"}</option>`).join("")}</select></label><label>Pistas contratadas<select name="laneCount"><option value="">Mínimas necesarias</option>${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join("")}</select></label><label class="check-row"><input name="separate" type="checkbox"> Cliente acepta pistas separadas</label></div><button class="button primary">Crear y retener pistas →</button></form></div></section>`;
 }
 function renderAdmin() {
   if (!state.settings) return `<div class="loading-card">Cargando administración…</div>`;
   const s = state.settings;
-  return `<section class="admin-layout"><div class="plain-card"><div class="panel-title"><div><h2>Operación y tarifas</h2><p>CLP enteros · hora local de Santiago · cambios auditados.</p></div><span class="pill">Admin</span></div><form id="settings"><div class="two-fields"><label>Establecimiento<input name="venue" value="${esc(s.venueName)}" required></label><label>Tarifa base por pista/hora<input name="rate" type="number" min="0" value="${s.generalRateClpPerLaneHour}" required><small>0 desactiva reservas mientras no haya tarifa.</small></label><label>Preparación entre clientes<input name="prep" type="number" min="0" max="60" value="${s.preparationMinutes}" required></label><label>Margen obligatorio antes del cierre<input name="closing" type="number" min="0" max="180" value="${s.closingMarginMinutes}" required></label><label>Minutos entre inicios<input name="step" type="number" min="5" max="60" step="5" value="${s.startIntervalMinutes}" required></label><label>Anticipación mínima web<input name="minimum" type="number" min="0" value="${s.minimumAdvanceMinutes}"></label><label>Máximo de días<input name="maximum" type="number" min="1" max="365" value="${s.maximumAdvanceDays}"></label><label>Aprobación desde pistas<input name="approval" type="number" min="1" max="12" value="${s.requireManualApprovalFromLanes}"></label><label>Tolerancia de llegada<input name="late" type="number" min="0" max="60" value="${s.lateArrivalToleranceMinutes}"></label></div><h3>Horario semanal</h3><div class="hours-settings">${days.map((d, n) => `<label><b>${d}</b><input type="time" name="open-${n}" value="${esc(s.weeklyHours[String(n)]?.open ?? "")}"><span>hasta</span><input type="time" name="close-${n}" value="${esc(s.weeklyHours[String(n)]?.close ?? "")}"></label>`).join("")}</div><button class="button primary">Guardar configuración</button></form><h3>Excepciones por fecha</h3>${Object.entries(
+  return `<section class="admin-layout"><div class="plain-card"><div class="panel-title"><div><h2>Operación y tarifas</h2><p>CLP enteros · hora local de Santiago · cambios auditados.</p></div><span class="pill">Admin</span></div><form id="settings"><div class="two-fields"><label>Establecimiento<input name="venue" value="${esc(s.venueName)}" required></label><label>Tarifa base por pista/hora<input name="rate" type="number" min="0" value="${s.generalRateClpPerLaneHour}" required><small>0 desactiva reservas mientras no haya tarifa.</small></label><label>Preparación entre clientes<input name="prep" type="number" min="0" max="60" value="${s.preparationMinutes}" required></label><label>Margen obligatorio antes del cierre<input name="closing" type="number" min="0" max="180" value="${s.closingMarginMinutes}" required></label><label>Minutos entre inicios<input name="step" type="number" min="5" max="60" step="5" value="${s.startIntervalMinutes}" required></label><label>Anticipación mínima web<input name="minimum" type="number" min="0" value="${s.minimumAdvanceMinutes}"></label><label>Máximo de días<input name="maximum" type="number" min="1" max="365" value="${s.maximumAdvanceDays}"></label><label>Aprobación desde pistas<input name="approval" type="number" min="1" max="12" value="${s.requireManualApprovalFromLanes}"></label><label>Tolerancia de llegada<input name="late" type="number" min="0" max="60" value="${s.lateArrivalToleranceMinutes}"></label></div><h3>Horario semanal</h3><div class="hours-settings">${days.map((d, n) => `<label><b>${d}</b><input type="time" name="open-${n}" value="${esc(s.weeklyHours[String(n)]?.open ?? "")}"><span>hasta</span><input type="time" name="close-${n}" value="${esc(s.weeklyHours[String(n)]?.close ?? "")}"></label>`).join("")}</div><button class="button primary">Guardar configuración</button></form><form id="calendar-settings" class="calendar-settings"><h3>Escala del calendario</h3><label>Ancho base por hora<select name="calendarWidth">${[36, 48, 60, 72, 84, 96, 108, 120].map((width) => `<option value="${width}" ${Number(s.calendarHourWidthPx ?? 60) === width ? "selected" : ""}>${width} px por hora</option>`).join("")}</select><small>El tablero usa la apertura y el cierre configurados. Puedes acercar o alejar y desplazarte horizontalmente.</small></label><button class="button outline">Guardar escala</button></form><h3>Excepciones por fecha</h3>${Object.entries(
     s.exceptions,
   )
     .map(
@@ -356,6 +398,62 @@ function modalHtml() {
 function render() {
   if (state.view === "book") renderBook();
   else renderStaff();
+  const scroller = document.querySelector<HTMLElement>(".board-scroll");
+  if (scroller) {
+    const axisHours = (state.board.axisEndMs - state.board.axisStartMs) / 3_600_000;
+    if (!state.calendarZoomCustomized && axisHours > 0) {
+      const baseZoom = state.board.calendarHourWidthPx ?? 60;
+      const totalZoom = Math.max(12, Math.min(baseZoom, scroller.clientWidth / axisHours));
+      if (Math.abs((state.calendarZoomPx ?? baseZoom) - totalZoom) > 0.2) {
+        state.calendarZoomPx = totalZoom;
+        render();
+        return;
+      }
+    }
+    scroller.addEventListener("scroll", updateCalendarControls, { passive: true });
+    updateCalendarControls();
+  }
+}
+function updateCalendarControls() {
+  const scroller = document.querySelector<HTMLElement>(".board-scroll");
+  if (!scroller || !state.board) return;
+  const scrollable = scroller.scrollWidth > scroller.clientWidth + 1;
+  const maxScroll = Math.max(0, scroller.scrollWidth - scroller.clientWidth);
+  const axisTrack = document.querySelector<HTMLElement>(".calendar-axis-viewport .hour-track");
+  if (axisTrack) axisTrack.style.transform = `translateX(${-scroller.scrollLeft}px)`;
+  const zoom = state.calendarZoomPx ?? state.board.calendarHourWidthPx ?? 60;
+  let selectedRange: (typeof calendarRanges)[number] = calendarRanges[0];
+  if (state.calendarZoomCustomized) {
+    const visibleHours = scroller.clientWidth / zoom;
+    selectedRange = calendarRanges[1];
+    for (const range of calendarRanges.slice(2)) {
+      if (
+        Math.abs(visibleHours - Number(range.hours)) <
+        Math.abs(visibleHours - Number(selectedRange.hours))
+      ) {
+        selectedRange = range;
+      }
+    }
+  }
+  state.calendarRange = selectedRange.value;
+  const rangeButton = document.querySelector<HTMLButtonElement>(".calendar-range-button");
+  if (rangeButton) {
+    const label = rangeButton.querySelector<HTMLElement>(".calendar-range-label");
+    if (label) label.textContent = selectedRange.label;
+    rangeButton.setAttribute("aria-pressed", "true");
+    rangeButton.setAttribute(
+      "aria-label",
+      `Rango visible: ${selectedRange.label}. Clic para cambiar`,
+    );
+  }
+  const left = document.querySelector<HTMLButtonElement>(
+    '[data-action="calendar-scroll"][data-direction="left"]',
+  );
+  const right = document.querySelector<HTMLButtonElement>(
+    '[data-action="calendar-scroll"][data-direction="right"]',
+  );
+  if (left) left.disabled = !scrollable || scroller.scrollLeft <= 1;
+  if (right) right.disabled = !scrollable || scroller.scrollLeft >= maxScroll - 1;
 }
 async function loadStaff(date = state.board?.date ?? localDate(Date.now())) {
   if (!state.user) return;
@@ -364,6 +462,7 @@ async function loadStaff(date = state.board?.date ?? localDate(Date.now())) {
     api("/api/staff/requests"),
   ]);
   state.board = board;
+  if (!state.calendarZoomCustomized) state.calendarZoomPx = board.calendarHourWidthPx ?? 60;
   state.requests = requests.requests;
   if (state.view === "staff") render();
 }
@@ -473,7 +572,7 @@ app.addEventListener("submit", async (event) => {
         }),
       });
       state.result = result;
-      state.requestKey = crypto.randomUUID();
+      state.requestKey = randomIdempotencyKey();
       state.selected = null;
       state.proof = "";
       say(
@@ -551,7 +650,7 @@ app.addEventListener("submit", async (event) => {
           acceptSeparated: d.has("separate"),
         }),
       });
-      state.manualKey = crypto.randomUUID();
+      state.manualKey = randomIdempotencyKey();
       state.manualStartAt = null;
       state.manualStartMs = null;
       state.page = "board";
@@ -575,6 +674,20 @@ app.addEventListener("submit", async (event) => {
       });
       await loadStaff(state.board.date);
       say("Bloqueo de mantenimiento creado y auditado.", "success");
+      render();
+      return;
+    }
+    if (form.id === "calendar-settings") {
+      const calendarHourWidthPx = +v("calendarWidth");
+      await api("/api/staff/settings", {
+        method: "PUT",
+        body: JSON.stringify({ calendarHourWidthPx }),
+      });
+      state.calendarZoomPx = calendarHourWidthPx;
+      state.calendarZoomCustomized = false;
+      if (state.board) state.board.calendarHourWidthPx = calendarHourWidthPx;
+      await loadAdmin();
+      say("Escala del calendario guardada.", "success");
       render();
       return;
     }
@@ -775,6 +888,52 @@ app.addEventListener("click", async (event) => {
       await loadStaff(date);
       return;
     }
+    if (action === "calendar-range-cycle" || action === "calendar-range-step") {
+      const scroller = document.querySelector<HTMLElement>(".board-scroll");
+      if (!scroller) return;
+      const currentIndex = calendarRanges.findIndex((range) => range.value === state.calendarRange);
+      const step =
+        action === "calendar-range-cycle" || target.dataset.direction === "next" ? 1 : -1;
+      const nextIndex = (currentIndex + step + calendarRanges.length) % calendarRanges.length;
+      const range = calendarRanges[nextIndex];
+      const oldZoom = state.calendarZoomPx ?? state.board.calendarHourWidthPx ?? 60;
+      const viewportWidth = scroller.clientWidth;
+      const durationHours = (state.board.axisEndMs - state.board.axisStartMs) / 3_600_000;
+      const newZoom =
+        range.value === "total"
+          ? Math.max(
+              12,
+              Math.min(state.board.calendarHourWidthPx ?? 60, viewportWidth / durationHours),
+            )
+          : Math.max(12, Math.min(300, viewportWidth / Number(range.hours)));
+      const centerScrollLeft = scroller.scrollLeft;
+      state.calendarZoomPx = newZoom;
+      state.calendarZoomCustomized = range.value !== "total";
+      state.calendarRange = range.value;
+      render();
+      const updatedScroller = document.querySelector<HTMLElement>(".board-scroll");
+      if (updatedScroller) {
+        updatedScroller.scrollLeft =
+          range.value === "total"
+            ? 0
+            : Math.max(
+                0,
+                (centerScrollLeft + viewportWidth / 2) * (newZoom / oldZoom) - viewportWidth / 2,
+              );
+      }
+      updateCalendarControls();
+      return;
+    }
+    if (action === "calendar-scroll") {
+      const scroller = document.querySelector<HTMLElement>(".board-scroll");
+      if (scroller) {
+        scroller.scrollBy({
+          left: scroller.clientWidth * 0.8 * (target.dataset.direction === "left" ? -1 : 1),
+          behavior: "smooth",
+        });
+      }
+      return;
+    }
     if (action === "clear") {
       state.message = "";
       render();
@@ -793,7 +952,7 @@ app.addEventListener("click", async (event) => {
       state.proof = "";
       state.verifiedEmail = "";
       state.result = null;
-      state.requestKey = crypto.randomUUID();
+      state.requestKey = randomIdempotencyKey();
       render();
       document.querySelector(".request-card")?.scrollIntoView({ behavior: "smooth" });
     }
@@ -910,7 +1069,7 @@ app.addEventListener("click", async (event) => {
         state.board?.reservations.find((b: any) => b.id === id) ?? state.modal?.booking;
       state.modal = {
         kind: action === "payment-modal" ? "payment" : "extend",
-        idempotencyKey: crypto.randomUUID(),
+        idempotencyKey: randomIdempotencyKey(),
         booking,
       };
       render();

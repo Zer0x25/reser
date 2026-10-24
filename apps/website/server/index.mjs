@@ -1076,15 +1076,33 @@ async function handleApi(req, res, url) {
     const date = url.searchParams.get("date") ?? formatLocalDate(Date.now());
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new HttpError(400, "Fecha inválida.");
     const { start, end } = parseLocalDay(date);
+    const settings = getSettings();
+    const [year, month, day] = date.split("-").map(Number);
+    const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+    const hours = settings.exceptions?.[date] ?? settings.weeklyHours?.[String(weekday)];
+    let axisStartMs = start;
+    let axisEndMs = end;
+    if (hours && !hours.closed && hours.open && hours.close) {
+      try {
+        axisStartMs = localDateTimeToEpoch(`${date}T${hours.open}`);
+        axisEndMs = localDateTimeToEpoch(`${date}T${hours.close}`);
+        if (axisEndMs <= axisStartMs)
+          axisEndMs = localDateTimeToEpoch(`${formatLocalDate(end)}T${hours.close}`);
+      } catch {
+        axisStartMs = start;
+        axisEndMs = end;
+      }
+    }
+    const queryEnd = Math.max(end, axisEndMs);
     const rows = db
       .prepare(`SELECT r.*,GROUP_CONCAT(a.lane_id) AS lane_ids FROM reservations r LEFT JOIN allocations a ON a.reservation_id=r.id AND a.active=1
       WHERE r.start_ms < ? AND r.end_ms > ? AND r.commercial_status NOT IN ('cancelled','rejected','finished') GROUP BY r.id ORDER BY r.start_ms`)
-      .all(end, start);
+      .all(queryEnd, start);
     const blocks = db
       .prepare(
         "SELECT * FROM maintenance_blocks WHERE status='active' AND start_ms < ? AND end_ms > ?",
       )
-      .all(end, start);
+      .all(queryEnd, start);
     const reservations = rows.map((row) => ({
       ...reservationPublic(row),
       id: row.id,
@@ -1099,10 +1117,21 @@ async function handleApi(req, res, url) {
         )
         .all(row.id),
     }));
+    axisStartMs = Math.min(
+      axisStartMs,
+      ...reservations.map((reservation) => reservation.start),
+      ...blocks.map((block) => block.start_ms),
+    );
+    axisEndMs = Math.max(
+      axisEndMs,
+      ...reservations.map((reservation) => reservation.end),
+      ...blocks.map((block) => block.end_ms),
+    );
     return json(res, 200, {
       date,
-      axisStartMs: start,
-      axisEndMs: end,
+      axisStartMs,
+      axisEndMs,
+      calendarHourWidthPx: settings.calendarHourWidthPx ?? 60,
       lanes: db.prepare("SELECT id,pair_id,x,y,active FROM lanes ORDER BY id").all(),
       reservations,
       blocks: blocks.map((block) => ({
@@ -1854,6 +1883,7 @@ async function handleApi(req, res, url) {
       "maximumAdvanceDays",
       "lateArrivalToleranceMinutes",
       "operationalLockMinutes",
+      "calendarHourWidthPx",
       "weeklyHours",
       "exceptions",
       "generalRateClpPerLaneHour",
@@ -1889,6 +1919,16 @@ async function handleApi(req, res, url) {
       updated.startIntervalMinutes > 60
     )
       throw new HttpError(400, "El intervalo de inicio debe estar entre 5 y 60 minutos.");
+    if (
+      !Number.isInteger(updated.calendarHourWidthPx) ||
+      updated.calendarHourWidthPx < 36 ||
+      updated.calendarHourWidthPx > 120 ||
+      updated.calendarHourWidthPx % 12 !== 0
+    )
+      throw new HttpError(
+        400,
+        "El ancho del calendario debe estar entre 36 y 120 píxeles por hora.",
+      );
     if (
       !Number.isInteger(updated.maximumAdvanceDays) ||
       updated.maximumAdvanceDays < 1 ||
