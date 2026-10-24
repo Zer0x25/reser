@@ -101,4 +101,6 @@ La optimización utiliza una puntuación de escenarios de demanda y una búsqued
 - La cola de correo reintenta cada 30 segundos mientras el proceso está activo. Para varios procesos API se debe añadir coordinación de trabajadores antes del despliegue horizontal.
 - Los recorridos se validan en pruebas de dominio y API; todavía no hay una suite automatizada de extremo a extremo que opere el navegador.
 
-Consulta las decisiones técnicas en [`docs/decisions/0001-mvp-stack.md`](docs/decisions/0001-mvp-stack.md).
+La especificación inicial completa se conserva en [`docs/product/initial-one-shot-implementation-prompt.md`](docs/product/initial-one-shot-implementation-prompt.md). Este README describe el estado actual y sus límites; el prompt define el alcance funcional objetivo.
+
+Decisiones aceptadas: [ADR 0001 — stack y límites arquitectónicos](docs/decisions/0001-mvp-stack.md) y [ADR 0002 — ciclo de reservas, pagos y límites de demo](docs/decisions/0002-reservation-and-demo-boundaries.md).
