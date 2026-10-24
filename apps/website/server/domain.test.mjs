@@ -5,6 +5,7 @@ import {
   chooseClosest,
   chooseCompact,
   chooseFirstAvailable,
+  formatLocalTime,
   findAlternatives,
   isLaneSetFree,
   isPhysicallyGrouped,
@@ -29,6 +30,13 @@ const settings = {
   weeklyHours: hours,
   exceptions: {},
 };
+
+function comparePreservationScores(a, b) {
+  for (let index = 0; index < a.length; index += 1) {
+    if (a[index] !== b[index]) return a[index] - b[index];
+  }
+  return 0;
+}
 
 test("capacity and physical pairs are explicit", () => {
   assert.equal(minimumLanes(6), 1);
@@ -284,4 +292,161 @@ test("alternatives respect preparation buffers and the optimizer is deterministi
   assert.equal(chooseFirstAvailable(fixture).startMs, 1);
   assert.equal(chooseClosest(fixture, 7).startMs, 8);
   assert.equal(chooseCompact(fixture).startMs, 1);
+});
+
+test("availability scenarios preserve capacity and physical grouping for representative demand", () => {
+  const date = "2027-01-08";
+  const reservations = [
+    {
+      id: "scenario-confirmed",
+      lanes: [1, 2],
+      startMs: localDateTimeToEpoch(`${date}T18:00`),
+      endMs: localDateTimeToEpoch(`${date}T19:00`),
+      preparationMinutes: settings.preparationMinutes,
+    },
+  ];
+  const blocks = [
+    {
+      laneId: 12,
+      startMs: localDateTimeToEpoch(`${date}T20:00`),
+      endMs: localDateTimeToEpoch(`${date}T21:00`),
+    },
+  ];
+
+  for (const players of [4, 6, 7, 12, 13, 18, 72]) {
+    const request = {
+      date,
+      preferredTime: "18:00",
+      players,
+      durationMinutes: 60,
+      reservations,
+      blocks,
+      settings,
+      limit: 8,
+    };
+    const options = findAlternatives(request);
+    assert.ok(options.length > 0, `${players} players should have a feasible alternative`);
+    assert.deepEqual(
+      options,
+      findAlternatives(request),
+      `${players} player results should be deterministic`,
+    );
+
+    for (const option of options) {
+      assert.equal(option.minimumLanes, minimumLanes(players));
+      assert.equal(option.laneCount, minimumLanes(players));
+      assert.ok(option.lanes.length * 6 >= players);
+      assert.equal(isPhysicallyGrouped(option.lanes), true);
+      assert.equal(option.endMs - option.startMs, 60 * 60_000);
+      assert.equal(
+        matchesHours(
+          option.startMs,
+          option.endMs + (settings.closingMarginMinutes ?? 0) * 60_000,
+          settings.weeklyHours,
+          settings.exceptions,
+        ),
+        true,
+      );
+      assert.equal(
+        isLaneSetFree({
+          lanes: option.lanes,
+          startMs: option.startMs,
+          endMs: option.endMs,
+          preparationMinutes: settings.preparationMinutes,
+          reservations,
+          blocks,
+        }),
+        true,
+      );
+    }
+  }
+});
+
+test("five and ten minute preparation buffers produce the expected next bookable start", () => {
+  const date = "2027-01-08";
+  const priorEnd = localDateTimeToEpoch(`${date}T18:00`);
+  const blocks = Array.from({ length: 11 }, (_, index) => ({
+    laneId: index + 2,
+    startMs: priorEnd,
+    endMs: localDateTimeToEpoch(`${date}T19:00`),
+  }));
+
+  for (const [preparationMinutes, expectedTime] of [
+    [5, "18:05"],
+    [10, "18:10"],
+  ]) {
+    const scenarioSettings = { ...settings, preparationMinutes, startIntervalMinutes: 5 };
+    const options = findAlternatives({
+      date,
+      preferredTime: "18:00",
+      players: 4,
+      durationMinutes: 60,
+      reservations: [
+        {
+          id: `prep-${preparationMinutes}`,
+          lanes: [1],
+          startMs: localDateTimeToEpoch(`${date}T17:00`),
+          endMs: priorEnd,
+          preparationMinutes,
+        },
+      ],
+      blocks,
+      settings: scenarioSettings,
+      limit: 8,
+    });
+    const closest = chooseClosest(options, priorEnd);
+
+    assert.ok(closest, `${preparationMinutes} minute preparation should leave an option`);
+    assert.equal(formatLocalTime(closest.startMs), expectedTime);
+    assert.deepEqual(closest.lanes, [1]);
+  }
+});
+
+test("engine recommendation preserves more future capacity than the nearest-time baseline", () => {
+  const date = "2027-01-08";
+  const reservations = [
+    [1, "18:00", "19:00"],
+    [3, "19:00", "20:00"],
+    [5, "20:00", "21:00"],
+    [6, "20:00", "21:00"],
+    [7, "21:00", "22:00"],
+  ].map(([lane, start, end], index) => ({
+    id: `demand-${index}`,
+    lanes: [lane],
+    startMs: localDateTimeToEpoch(`${date}T${start}`),
+    endMs: localDateTimeToEpoch(`${date}T${end}`),
+    preparationMinutes: settings.preparationMinutes,
+  }));
+  const options = findAlternatives({
+    date,
+    preferredTime: "18:00",
+    players: 4,
+    durationMinutes: 60,
+    reservations,
+    blocks: [],
+    settings,
+    limit: 100,
+  });
+  const preferredStart = localDateTimeToEpoch(`${date}T18:00`);
+  const bestPreservation = options.reduce((best, option) =>
+    !best || comparePreservationScores(option.preservationScore, best.preservationScore) > 0
+      ? option
+      : best,
+  );
+  const baselines = [
+    ["first available", chooseFirstAvailable(options)],
+    ["nearest time", chooseClosest(options, preferredStart)],
+    ["simple compaction", chooseCompact(options)],
+  ];
+
+  assert.deepEqual(bestPreservation.preservationScore, [5, 5, 2, 5]);
+  for (const [name, baseline] of baselines) {
+    assert.ok(baseline, `${name} should select a feasible alternative`);
+    assert.ok(
+      comparePreservationScores(bestPreservation.preservationScore, baseline.preservationScore) >=
+        0,
+      `engine recommendation should preserve at least as much capacity as ${name}`,
+    );
+  }
+  assert.deepEqual(chooseClosest(options, preferredStart).preservationScore, [3, 3, 1, 3]);
 });

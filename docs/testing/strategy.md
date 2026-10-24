@@ -28,6 +28,7 @@ El workflow de GitHub corre `regression` en cada push y pull request e instala C
 ## Cobertura funcional actual
 
 - **Dominio y hora:** capacidad, parejas físicas, agrupación, buffers de preparación, excepciones, horarios nocturnos, DST y cálculo determinista de alternativas. Las pruebas comparan los criterios de primera opción, cercanía y compactación básica; esto no demuestra optimalidad global del optimizador.
+- **Escenarios sintéticos del motor:** una jornada con compromisos y mantenimiento valida siete tamaños representativos, agrupación física y ausencia de conflictos; casos de 5/10 minutos verifican la siguiente hora posible. Un día con ocupación predefinida compara el vector de capacidad preservada del motor con primero libre, hora más cercana y compactación sencilla.
 - **API e inventario:** autenticación/roles, SQLite, escrituras repetidas, solicitudes que compiten por la última capacidad, seguimiento y operaciones manuales.
 - **Cliente web:** verificación local de correo, solicitud de tres o más pistas, aprobación humana, recotización y aceptación del nuevo importe, renovación de enlace vencido y cancelación elegible.
 - **Recepción:** alta presencial, check-in y extensión autorizada de una reserva ocupada, verificando el nuevo término.
@@ -42,7 +43,7 @@ Los datos de Playwright son efímeros. Un test restaura las horas de demo despu�
 - La base de cada proceso de prueba se crea en el directorio temporal y se elimina en el teardown.
 - Los nombres y emails son sintéticos y usan `example.test` o `demo.local`.
 - Playwright conserva traza y captura solo ante un fallo; CI no publica ni despliega la aplicación.
-- Cobertura dirigida disponible: `pnpm exec vp run coverage:domain` mide dominio/tiempo y `pnpm exec vp run coverage:calendar` mide `calendar.ts`. La última medición registrada para dominio/tiempo fue 88.07% líneas, 81.76% ramas y 95.35% funciones; `calendar.ts` obtuvo 100% en las tres métricas. Volver a ejecutar los comandos para actualizar los valores.
+- Cobertura dirigida disponible: `pnpm exec vp run coverage:domain` mide dominio/tiempo y `pnpm exec vp run coverage:calendar` mide `calendar.ts`. La última medición, después de sumar escenarios de demanda, fue 88.07% líneas, 83.04% ramas y 95.35% funciones; `calendar.ts` obtuvo 100% en las tres métricas. Volver a ejecutar los comandos para actualizar los valores.
 - No hay instrumentación unificada de cobertura HTTP y vistas, ni umbral global. Se priorizan ramas comerciales y de autorización para evitar que un porcentaje global premie pruebas superficiales.
 
 ## Lógica de dominio, UX y arquitectura de pruebas

@@ -88,13 +88,13 @@ La recepción consulta el mismo inventario. Un clic o activación por teclado en
 
 La estrategia operativa está en [Testing strategy](../testing/strategy.md). La suite por capas actualmente cubre:
 
-1. **Unidad de dominio y tiempo:** calendario local, DST, reglas de capacidad, tarifas, agrupación y disponibilidad.
+1. **Unidad de dominio y tiempo:** calendario local, DST, reglas de capacidad, tarifas, agrupación y disponibilidad; escenarios sintéticos comparan la preservación de capacidad del motor con políticas simples para grupos de 4–72 personas.
 2. **Unidad de presentación:** cálculos puros del calendario que no requieren DOM.
 3. **Integración API:** SQLite aislado, autenticación, roles, idempotencia, concurrencia, pago manual y bloqueos.
 4. **E2E navegador:** verificación de correo local, aprobación de grupo, recotización y aceptación, renovación/cancelación, reserva presencial/check-in/extensión, calendario por teclado y móvil. axe cubre siete estados y el reflow se revisa en 320–428, 768 y 1024 px.
 5. **Smoke:** tres recorridos de entrada pública y calendario, en Vite de desarrollo y contra el artefacto compilado servido localmente por Node. No hay smoke de URL desplegada hasta configurar hosting.
 
-La cobertura dirigida disponible es 88.07% de líneas, 81.76% de ramas y 95.35% de funciones para dominio/tiempo; `calendar.ts` registra 100% en las tres métricas. No hay una cifra global porque la API HTTP y las vistas no están instrumentadas en estos reportes. No se fija un umbral global hasta tener esa línea base. axe automatiza criterios WCAG en los estados indicados; no reemplaza una revisión manual con teclado y lector de pantalla ni cubre todos los estados.
+La cobertura dirigida disponible es 88.07% de líneas, 83.04% de ramas y 95.35% de funciones para dominio/tiempo; `calendar.ts` registra 100% en las tres métricas. No hay una cifra global porque la API HTTP y las vistas no están instrumentadas en estos reportes. No se fija un umbral global hasta tener esa línea base. axe automatiza criterios WCAG en los estados indicados; no reemplaza una revisión manual con teclado y lector de pantalla ni cubre todos los estados.
 
 ## Despliegue y operación
 
