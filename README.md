@@ -33,11 +33,12 @@ pnpm exec vp run e2e:install
 pnpm exec vp run smoke
 pnpm exec vp run smoke:preview
 pnpm exec vp run e2e
+pnpm exec vp run test:visual
 pnpm exec vp run regression
 pnpm exec vp run simulate:engine
 ```
 
-`test:unit` y `test:integration` ejecutan cada capa por separado. `ready` suma formato, lint, tipos, toda la suite de unidad/integración y compilación. Usa `e2e:install` una vez para instalar Chromium. `smoke` corre tres verificaciones rápidas contra Vite; `smoke:preview` compila y corre las mismas tres contra el artefacto servido localmente por Node; `e2e` ejecuta once pruebas, incluidos aprobación, aceptación de precio, renovación/cancelación, check-in/extensión, axe, búsqueda lenta, disponibilidad vacía, recuperación de red y reflow del flujo público en nueve anchos de pantalla. `regression` corre `ready`, E2E y smoke compilado antes de integrar un cambio. Las pruebas de API y E2E usan bases SQLite temporales y no modifican el archivo de demostración. El correo de prueba se captura en un servicio local.
+`test:unit` y `test:integration` ejecutan cada capa por separado. `ready` suma formato, lint, tipos, toda la suite de unidad/integración y compilación. Usa `e2e:install` una vez para instalar Chromium. `smoke` corre tres verificaciones rápidas contra Vite; `smoke:preview` compila y corre las mismas tres contra el artefacto servido localmente por Node; `e2e` ejecuta doce pruebas, incluidos aprobación, aceptación de precio, renovación/cancelación, check-in/extensión, axe, búsquedas lentas y fallidas, reflow en nueve anchos y cuatro snapshots visuales. `test:visual` ejecuta solo esas comparaciones de pantallas. Las pruebas generativas del dominio recorren los 4095 subconjuntos de pistas y verifican 5000 combinaciones seeded de inventario. `regression` corre `ready`, E2E y smoke compilado antes de integrar un cambio. Las pruebas de API y E2E usan bases SQLite temporales y no modifican el archivo de demostración. El correo de prueba se captura en un servicio local.
 
 `simulate:engine` ejecuta una jornada sintética reproducible y compara la recomendación del motor con primera hora libre, hora más cercana y compactación simple. Reporta solicitudes aceptadas, horas-pista, ingreso ilustrativo, distancia horaria y capacidad residual por tamaño de demanda. No usa precios ni reservas reales.
 

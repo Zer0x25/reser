@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures.js";
 
 function addDays(date: string, days: number) {
   const [year, month, day] = date.split("-").map(Number);
@@ -42,7 +42,8 @@ test("@smoke reception can navigate the calendar, zoom it, and use a free lane",
   await expect(page.getByRole("status")).toContainText("Inicio precargado");
 });
 
-test("@smoke mobile reception can zoom and scroll the calendar", async ({ page }) => {
+test("@smoke @visual mobile reception can zoom and scroll the calendar", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-10-24T15:00:00-03:00") });
   await page.goto("/");
   await page.getByRole("button", { name: /Acceso del equipo/ }).click();
   await page.locator('#login [name="email"]').fill("recepcion@demo.local");
@@ -50,6 +51,10 @@ test("@smoke mobile reception can zoom and scroll the calendar", async ({ page }
   await page.getByRole("button", { name: "Ingresar →" }).click();
   await expect(page.getByRole("heading", { name: "Tablero de pistas" })).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator(".calendar-controls")).toHaveScreenshot(
+    "reception-calendar-controls-mobile.png",
+    { animations: "disabled" },
+  );
 
   const range = page.locator(".calendar-range-button");
   const stepNext = page.locator('[data-action="calendar-range-step"][data-direction="next"]');

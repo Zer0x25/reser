@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./fixtures.js";
 
 function addDays(date: string, days: number) {
   const [year, month, day] = date.split("-").map(Number);

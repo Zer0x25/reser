@@ -1,4 +1,4 @@
-import { defineConfig } from "@playwright/test";
+import { chromium, defineConfig } from "@playwright/test";
 import { existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,6 +6,7 @@ import { join } from "node:path";
 const databasePath = join(tmpdir(), `bowling-e2e-${process.pid}.sqlite`);
 const previewMode = process.env.PLAYWRIGHT_PREVIEW === "true";
 const appUrl = previewMode ? "http://127.0.0.1:3001" : "http://127.0.0.1:5173";
+const bundledChromium = chromium.executablePath();
 process.on("exit", () => {
   for (const suffix of ["", "-shm", "-wal"]) {
     try {
@@ -31,7 +32,11 @@ export default defineConfig({
     timezoneId: "Pacific/Auckland",
     viewport: { width: 1280, height: 900 },
     launchOptions: {
-      executablePath: existsSync("/usr/bin/chromium") ? "/usr/bin/chromium" : undefined,
+      executablePath: existsSync(bundledChromium)
+        ? bundledChromium
+        : existsSync("/usr/bin/chromium")
+          ? "/usr/bin/chromium"
+          : undefined,
       args: ["--no-sandbox"],
     },
     trace: "retain-on-failure",
