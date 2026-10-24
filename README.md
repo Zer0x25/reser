@@ -1,29 +1,104 @@
-# Vite+ Monorepo Starter
+# Bowling Smart Booking Engine
 
-A starter for creating a Vite+ monorepo.
+MVP en español para gestionar reservas web y de recepción de un salón de 12 pistas. Incluye búsqueda y cotización, solicitudes con capacidad compartida, operación de pistas, pagos manuales, administración y auditoría.
 
-## Development
+## Requisitos
 
-- Check everything is ready:
+- Node.js 22.18 o posterior (usa `node:sqlite`).
+- pnpm compatible con la versión declarada en `package.json`.
 
-```bash
-vp run ready
-```
-
-- Run the tests:
+## Desarrollo local
 
 ```bash
-vp run -r test
+pnpm install
+pnpm --filter website dev
 ```
 
-- Build the monorepo:
+Abre <http://localhost:5173>. Vite sirve la interfaz y reenvía `/api` al servidor local en el puerto 3001. La base SQLite se crea en `apps/website/data/demo.sqlite`; la carpeta se excluye de Git.
+
+Accesos locales:
+
+| Perfil         | Correo                 | Contraseña         |
+| -------------- | ---------------------- | ------------------ |
+| Recepción      | `recepcion@demo.local` | `BowlingDemo2026!` |
+| Administración | `admin@demo.local`     | `BowlingDemo2026!` |
+
+Son credenciales exclusivas de demostración. Los códigos de verificación y mensajes de correo de desarrollo aparecen en la terminal donde corre la API. Los datos, reservas y precios iniciales son de ejemplo y no autorizan cobros.
+
+## Verificación
 
 ```bash
-vp run -r build
+pnpm --filter website test
+pnpm --filter website build
+pnpm run ready
 ```
 
-- Run the development server:
+`ready` ejecuta la revisión del monorepo, las pruebas y la compilación. Las pruebas usan una base temporal y no modifican el archivo de demostración.
+
+## Producción
+
+La configuración productiva empieza cerrada: no ofrece horarios, no tiene tarifas, no crea usuarios de demo y exige configurar correo antes de verificar contactos. Crea una copia de `.env.example`, completa los valores y exporta sus variables en el entorno del proceso. No guardes secretos reales en Git.
+
+Variables requeridas o recomendadas:
+
+| Variable                                                | Uso                                                                                                                                                                 |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NODE_ENV=production` y `MVP_MODE=production`           | Desactivar semilla y política de demo.                                                                                                                              |
+| `DATABASE_PATH`                                         | Ruta persistente de SQLite fuera del directorio efímero del despliegue.                                                                                             |
+| `TOKEN_SECRET`                                          | Secreto estable de al menos 32 bytes para sesiones, enlaces, pruebas de correo y cifrado de la cola de correos. Respáldalo y no lo cambies sin un plan de rotación. |
+| `ADMIN_EMAIL`, `ADMIN_PASSWORD`                         | Crear el primer administrador; exige contraseña de 12 caracteres o más.                                                                                             |
+| `PUBLIC_APP_URL`                                        | URL pública HTTPS incluida en los enlaces de reservas.                                                                                                              |
+| `MAIL_DELIVERY_URL`, `MAIL_DELIVERY_TOKEN`, `MAIL_FROM` | Adaptador HTTP para el proveedor de correo.                                                                                                                         |
+| `PORT`                                                  | Puerto del servidor Node; por defecto, 3001.                                                                                                                        |
+
+Una vez configuradas las variables:
 
 ```bash
-vp run dev
+pnpm install
+pnpm --filter website build
+pnpm --filter website api
 ```
+
+El mismo proceso Node sirve la interfaz compilada y la API. Configura el proxy TLS y el dominio público en la infraestructura de despliegue. Conserva el archivo SQLite en almacenamiento persistente. Para una copia consistente, detén el proceso antes de copiar la base y sus archivos WAL, o usa una herramienta de backup SQLite que los incluya.
+
+Al iniciar por primera vez, configura horarios, excepciones, preparación, tarifas y promociones desde Administración antes de aceptar reservas. El inventario físico inicial es una distribución de dos pistas de ancho, con las parejas 1–2, 3–4, 5–6, 7–8, 9–10 y 11–12. Los precios, horarios y políticas comerciales reales pertenecen al establecimiento.
+
+### Adaptador de correo
+
+El MVP envía `POST` JSON a `MAIL_DELIVERY_URL`, con `Authorization: Bearer <MAIL_DELIVERY_TOKEN>`:
+
+```json
+{
+  "from": "reservas@tu-dominio.cl",
+  "to": "cliente@ejemplo.cl",
+  "subject": "Reserva confirmada",
+  "text": "Texto del mensaje y enlace seguro"
+}
+```
+
+El servicio debe devolver un estado HTTP 2xx cuando acepte el mensaje. La aplicación no está ligada a un proveedor concreto. Los correos transaccionales quedan en una cola SQLite cifrada con `TOKEN_SECRET`; los fallidos se reintentan y Administración puede reintentarlos manualmente. Los códigos de verificación se envían sincrónicamente y no crean retenciones.
+
+## Qué incluye el MVP
+
+- Motor determinista que aplica capacidad, parejas, agrupaciones, horario, preparación, cierres y mantenimiento; propone horarios cercanos y opciones que preservan mejor la capacidad futura.
+- Inventario SQLite compartido por canales, operaciones de escritura transaccionales, prevención de solapamientos e idempotencia.
+- Búsqueda pública, cotización en CLP, franjas y excepciones tarifarias, promociones no acumulables, verificación de correo, solicitud automática hasta el umbral configurado y retenciones para aprobación.
+- Seguimiento con enlace aleatorio de 24 horas, renovación después de verificar el correo, aceptación de nuevo precio y cancelación web con al menos 24 horas de anticipación.
+- Tablero de doce pistas, solicitudes, reservas telefónicas/presenciales, check-in, resolución manual de ausencias, término real, extensiones autorizadas, mantenimiento, reoptimización localizada, pagos informados/verificados y devoluciones externas para administración.
+- Administración de horarios, preparación, tarifas, promociones, empleados, activación de cuentas, cola de correo y auditoría.
+
+La optimización utiliza una puntuación de escenarios de demanda y una búsqueda localizada limitada a 80 reservas por operación. Es una heurística reproducible; no demuestra el óptimo global. Los precios se calculan por minuto local y se redondea una sola vez al CLP más cercano (mitades hacia arriba).
+
+## Límites conocidos y asuntos por definir
+
+- Las tarifas y horas de demo son ficticias. En producción hay que introducir los valores aprobados por el establecimiento.
+- No hay pasarela, anticipos automáticos, importes de penalización tardía, penalizaciones por ausencia, impuestos o compensaciones. Un pago verificado o devolución registrada afirma que se comprobó fuera del sistema; no mueve dinero.
+- Las solicitudes web se limitan transaccionalmente a dos pendientes por correo. Aún faltan cupos y detección de duplicados para solicitudes manuales, excepciones justificadas de recepción y alertas de abuso más amplias.
+- El umbral de aprobación por número de pistas es configurable; políticas de anticipos por canal/tipo aún no están implementadas.
+- Las modificaciones ordinarias de horario, duración, cantidad de pistas y jugadores aún no cuentan con flujo de aprobación. Tampoco existe flujo de incidencias y reubicación supervisada por falla de pista.
+- La ficha y el tablero no incluyen todos los indicadores históricos de ocupación, fragmentación, conversión e ingresos solicitados. Los indicadores presentes usan registros reales.
+- La forma física del salón comienza con la distribución supuesta 2 × 6; la administración todavía no edita coordenadas o adyacencias.
+- La cola de correo reintenta cada 30 segundos mientras el proceso está activo. Para varios procesos API se debe añadir coordinación de trabajadores antes del despliegue horizontal.
+- Los recorridos se validan en pruebas de dominio y API; todavía no hay una suite automatizada de extremo a extremo que opere el navegador.
+
+Consulta las decisiones técnicas en [`docs/decisions/0001-mvp-stack.md`](docs/decisions/0001-mvp-stack.md).

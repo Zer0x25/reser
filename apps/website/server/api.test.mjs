@@ -1,0 +1,467 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { once } from "node:events";
+import { localDateTimeToEpoch, formatLocalDate } from "./domain.mjs";
+
+async function freePort() {
+  const { createServer } = await import("node:net");
+  const server = createServer();
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const port = server.address().port;
+  await new Promise((resolve) => server.close(resolve));
+  return port;
+}
+async function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+test("HTTP API authenticates staff and serializes competing claims on the final inventory", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "bowling-api-"));
+  const port = await freePort();
+  const base = `http://127.0.0.1:${port}`;
+  const child = spawn(
+    globalThis.process.execPath,
+    [new URL("./index.mjs", import.meta.url).pathname],
+    {
+      env: {
+        ...process.env,
+        NODE_ENV: "development",
+        MVP_MODE: "demo",
+        DATABASE_PATH: join(directory, "test.sqlite"),
+        PORT: `${port}`,
+        TOKEN_SECRET: "api-tests-stable-secret-with-at-least-32-bytes",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  let output = "";
+  let errorOutput = "";
+  child.stdout.setEncoding("utf8").on("data", (chunk) => {
+    output += chunk;
+  });
+  child.stderr.setEncoding("utf8").on("data", (chunk) => {
+    errorOutput += chunk;
+  });
+  t.after(async () => {
+    child.kill("SIGTERM");
+    await Promise.race([once(child, "exit"), sleep(1500)]);
+    await rm(directory, { recursive: true, force: true });
+  });
+  let ready = false;
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    try {
+      const response = await fetch(`${base}/api/health`);
+      if (response.ok) {
+        ready = true;
+        break;
+      }
+    } catch {
+      /* wait for listener */
+    }
+    if (child.exitCode !== null) break;
+    await sleep(100);
+  }
+  assert.equal(ready, true, `API did not start: ${errorOutput}`);
+
+  const unauthorized = await fetch(`${base}/api/staff/board`);
+  assert.equal(unauthorized.status, 401);
+  const login = await fetch(`${base}/api/auth/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: "recepcion@demo.local", password: "BowlingDemo2026!" }),
+  });
+  assert.equal(login.status, 200);
+  const cookie = login.headers.get("set-cookie").split(";")[0];
+  const blockedAdmin = await fetch(`${base}/api/staff/settings`, { headers: { cookie } });
+  assert.equal(blockedAdmin.status, 403);
+  const fallBackBoard = await fetch(`${base}/api/staff/board?date=2026-04-04`, {
+    headers: { cookie },
+  });
+  assert.equal(fallBackBoard.status, 200);
+  const fallBackDay = await fallBackBoard.json();
+  assert.equal(fallBackDay.axisEndMs - fallBackDay.axisStartMs, 25 * 60 * 60_000);
+  const deniedOutbox = await fetch(`${base}/api/staff/emails`, { headers: { cookie } });
+  assert.equal(deniedOutbox.status, 403);
+  const adminLogin = await fetch(`${base}/api/auth/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: "admin@demo.local", password: "BowlingDemo2026!" }),
+  });
+  assert.equal(adminLogin.status, 200);
+  const adminCookie = adminLogin.headers.get("set-cookie").split(";")[0];
+  assert.equal(
+    (await fetch(`${base}/api/staff/emails`, { headers: { cookie: adminCookie } })).status,
+    200,
+  );
+
+  const emails = ["one@example.test", "two@example.test"];
+  const proofs = [];
+  for (const email of emails) {
+    const marker = output.length;
+    const started = await fetch(`${base}/api/email/start`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+    assert.equal(started.status, 200);
+    let code;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const sent = output.slice(marker);
+      const match = new RegExp(
+        `Para: ${email.replaceAll(".", "\\.")}\\nAsunto:[^\\n]*\\nTu código de verificación es (\\d{6})`,
+      ).exec(sent);
+      if (match) {
+        code = match[1];
+        break;
+      }
+      await sleep(25);
+    }
+    assert.ok(code, `development email was not emitted for ${email}`);
+    const verified = await fetch(`${base}/api/email/complete`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, code }),
+    });
+    assert.equal(verified.status, 200);
+    proofs.push((await verified.json()).emailProof);
+  }
+
+  const date = formatLocalDate(Date.now() + 3 * 86_400_000);
+  const startAt = `${date}T18:00`;
+  const create = (index) =>
+    fetch(`${base}/api/requests`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        idempotencyKey: `concurrent-request-${index}`,
+        emailProof: proofs[index],
+        customerName: `Equipo ${index + 1}`,
+        email: emails[index],
+        startAt,
+        players: 72,
+        durationMinutes: 60,
+        laneCount: 12,
+        acceptSeparated: false,
+        acceptTerms: true,
+      }),
+    });
+  const competing = await Promise.all([create(0), create(1)]);
+  assert.deepEqual(
+    competing.map((response) => response.status).sort((a, b) => a - b),
+    [201, 409],
+  );
+  const winningIndex = competing.findIndex((response) => response.status === 201);
+  const winner = competing[winningIndex];
+  const first = await winner.json();
+  assert.equal(first.status, "pending_approval");
+
+  const idempotent = await fetch(`${base}/api/requests`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      idempotencyKey: `concurrent-request-${winningIndex}`,
+      emailProof: "consumed",
+      customerName: "Equipo repetido",
+      email: "ignored@example.test",
+      startAt,
+      players: 72,
+      durationMinutes: 60,
+      laneCount: 12,
+      acceptTerms: true,
+    }),
+  });
+  // The winning idempotency key is tied to its exact request and never creates a second reservation.
+  assert.equal(idempotent.status, 200);
+  assert.equal((await idempotent.json()).reused, true);
+  const board = await fetch(`${base}/api/staff/board?date=${date}`, { headers: { cookie } });
+  assert.equal(board.status, 200);
+  const scheduled = (await board.json()).reservations;
+  assert.equal(
+    scheduled.filter(
+      (booking) => booking.start === localDateTimeToEpoch(startAt) && booking.laneCount === 12,
+    ).length,
+    1,
+  );
+
+  const manualDate = formatLocalDate(Date.now() + 4 * 86_400_000);
+  const manualStart = `${manualDate}T18:00`;
+  const manualBody = {
+    idempotencyKey: "manual-booking-once",
+    channel: "phone",
+    customerName: "Reserva telefónica",
+    phone: "+56912345678",
+    email: "walkin@example.test",
+    players: 4,
+    startAt: manualStart,
+    durationMinutes: 60,
+  };
+  const missingPhone = await fetch(`${base}/api/staff/bookings`, {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie },
+    body: JSON.stringify({ ...manualBody, idempotencyKey: "manual-missing-phone", phone: "" }),
+  });
+  assert.equal(missingPhone.status, 400);
+  const manualResponse = await fetch(`${base}/api/staff/bookings`, {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie },
+    body: JSON.stringify(manualBody),
+  });
+  assert.equal(manualResponse.status, 201);
+  const manual = await manualResponse.json();
+  const repeatedManual = await fetch(`${base}/api/staff/bookings`, {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie },
+    body: JSON.stringify(manualBody),
+  });
+  assert.equal(repeatedManual.status, 200);
+  assert.equal((await repeatedManual.json()).reused, true);
+
+  const verificationMarker = output.length;
+  const emailStarted = await fetch(`${base}/api/email/start`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: manualBody.email }),
+  });
+  assert.equal(emailStarted.status, 200);
+  let renewalCode;
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const match = new RegExp(
+      `Para: ${manualBody.email}\\nAsunto:[^\\n]*\\nTu código de verificación es (\\d{6})`,
+    ).exec(output.slice(verificationMarker));
+    if (match) {
+      renewalCode = match[1];
+      break;
+    }
+    await sleep(25);
+  }
+  assert.ok(renewalCode, "development email was not emitted for management-link renewal");
+  const verifiedRenewal = await fetch(`${base}/api/email/complete`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: manualBody.email, code: renewalCode }),
+  });
+  assert.equal(verifiedRenewal.status, 200);
+  const renewedLink = await fetch(`${base}/api/manage/renew`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      email: manualBody.email,
+      code: manual.booking.code,
+      emailProof: (await verifiedRenewal.json()).emailProof,
+    }),
+  });
+  assert.equal(renewedLink.status, 200);
+  const renewed = await renewedLink.json();
+  assert.equal(renewed.renewed, true);
+  const managedBooking = await fetch(`${base}/api/manage`, {
+    headers: { authorization: `Bearer ${new URL(renewed.manageLink).searchParams.get("token")}` },
+  });
+  assert.equal(managedBooking.status, 200);
+  assert.equal((await managedBooking.json()).booking.code, manual.booking.code);
+
+  const paymentBody = {
+    idempotencyKey: "manual-payment-once",
+    amountClp: 3000,
+    method: "transfer",
+    status: "reported",
+    reference: "TRX-1",
+  };
+  const payment = await fetch(`${base}/api/staff/bookings/${manual.booking.id}/payments`, {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie },
+    body: JSON.stringify(paymentBody),
+  });
+  assert.equal(payment.status, 201);
+  const paymentResult = await payment.json();
+  assert.equal(paymentResult.financialStatus, "pending_verification");
+  const repeatedPayment = await fetch(`${base}/api/staff/bookings/${manual.booking.id}/payments`, {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie },
+    body: JSON.stringify(paymentBody),
+  });
+  assert.equal(repeatedPayment.status, 200);
+  assert.equal((await repeatedPayment.json()).reused, true);
+  const verifiedPayment = await fetch(
+    `${base}/api/staff/payments/${paymentResult.paymentId}/verify`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify({ reference: "TRX-1 confirmed" }),
+    },
+  );
+  assert.equal(verifiedPayment.status, 200);
+  assert.equal((await verifiedPayment.json()).financialStatus, "partially_paid");
+  const forbiddenRefund = await fetch(`${base}/api/staff/bookings/${manual.booking.id}/payments`, {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie },
+    body: JSON.stringify({
+      idempotencyKey: "refund-reception-denied",
+      amountClp: 1000,
+      method: "refund",
+      status: "refund_recorded",
+    }),
+  });
+  assert.equal(forbiddenRefund.status, 403);
+  const refund = await fetch(`${base}/api/staff/bookings/${manual.booking.id}/payments`, {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie: adminCookie },
+    body: JSON.stringify({
+      idempotencyKey: "manual-refund-once",
+      amountClp: 1000,
+      method: "refund",
+      status: "refund_recorded",
+      reference: "Transferencia de devolución externa",
+    }),
+  });
+  assert.equal(refund.status, 201);
+  assert.equal((await refund.json()).booking.balanceClp, 10000);
+
+  const createStaff = await fetch(`${base}/api/staff/users`, {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie: adminCookie },
+    body: JSON.stringify({
+      name: "Operador de prueba",
+      email: "operator@example.test",
+      password: "OperatorTestPass2026!",
+      role: "reception",
+    }),
+  });
+  assert.equal(createStaff.status, 201);
+  const staffAccount = await createStaff.json();
+  const operatorLogin = await fetch(`${base}/api/auth/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: "operator@example.test", password: "OperatorTestPass2026!" }),
+  });
+  assert.equal(operatorLogin.status, 200);
+  const operatorCookie = operatorLogin.headers.get("set-cookie").split(";")[0];
+  const deactivated = await fetch(`${base}/api/staff/users/${staffAccount.id}/status`, {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie: adminCookie },
+    body: JSON.stringify({ active: false }),
+  });
+  assert.equal(deactivated.status, 200);
+  assert.equal(
+    (await (await fetch(`${base}/api/auth/me`, { headers: { cookie: operatorCookie } })).json())
+      .user,
+    null,
+  );
+  const reactivated = await fetch(`${base}/api/staff/users/${staffAccount.id}/status`, {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie: adminCookie },
+    body: JSON.stringify({ active: true }),
+  });
+  assert.equal(reactivated.status, 200);
+  assert.equal(
+    (
+      await fetch(`${base}/api/auth/login`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: "operator@example.test", password: "OperatorTestPass2026!" }),
+      })
+    ).status,
+    200,
+  );
+
+  const blockedMaintenance = await fetch(`${base}/api/staff/blocks`, {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie },
+    body: JSON.stringify({
+      laneId: null,
+      startMs: localDateTimeToEpoch(manualStart),
+      endMs: localDateTimeToEpoch(`${manualDate}T19:00`),
+      reason: "Corte general",
+    }),
+  });
+  assert.equal(blockedMaintenance.status, 409);
+  const laneBlock = await fetch(`${base}/api/staff/blocks`, {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie },
+    body: JSON.stringify({
+      laneId: 2,
+      startMs: localDateTimeToEpoch(manualStart),
+      endMs: localDateTimeToEpoch(`${manualDate}T19:00`),
+      reason: "Inspección",
+    }),
+  });
+  assert.equal(laneBlock.status, 201);
+  const block = await laneBlock.json();
+  const releaseBlock = await fetch(`${base}/api/staff/blocks/${block.id}`, {
+    method: "DELETE",
+    headers: { cookie },
+  });
+  assert.equal(releaseBlock.status, 200);
+});
+
+test("production starts closed and refuses email verification without a provider", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "bowling-production-"));
+  const port = await freePort();
+  const base = `http://127.0.0.1:${port}`;
+  const child = spawn(
+    globalThis.process.execPath,
+    [new URL("./index.mjs", import.meta.url).pathname],
+    {
+      env: {
+        ...process.env,
+        NODE_ENV: "production",
+        MVP_MODE: "production",
+        DATABASE_PATH: join(directory, "production.sqlite"),
+        PORT: `${port}`,
+        TOKEN_SECRET: "production-tests-stable-secret-with-at-least-32-bytes",
+        ADMIN_EMAIL: "admin@example.test",
+        ADMIN_PASSWORD: "ProductionAdminPass2026!",
+        MAIL_DELIVERY_URL: "",
+        MAIL_DELIVERY_TOKEN: "",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  let errorOutput = "";
+  child.stderr.setEncoding("utf8").on("data", (chunk) => {
+    errorOutput += chunk;
+  });
+  t.after(async () => {
+    child.kill("SIGTERM");
+    await Promise.race([once(child, "exit"), sleep(1500)]);
+    await rm(directory, { recursive: true, force: true });
+  });
+  let ready = false;
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    try {
+      const response = await fetch(`${base}/api/health`);
+      if (response.ok) {
+        ready = true;
+        break;
+      }
+    } catch {
+      /* wait for listener */
+    }
+    if (child.exitCode !== null) break;
+    await sleep(100);
+  }
+  assert.equal(ready, true, `production API did not start: ${errorOutput}`);
+  const config = await (await fetch(`${base}/api/public-config`)).json();
+  assert.equal(config.demoMode, false);
+  assert.equal(config.rateConfigured, false);
+  assert.deepEqual(
+    Object.values(config.weeklyHours).map((rule) => rule.closed),
+    Array(7).fill(true),
+  );
+  const demoLogin = await fetch(`${base}/api/auth/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: "recepcion@demo.local", password: "BowlingDemo2026!" }),
+  });
+  assert.equal(demoLogin.status, 401);
+  const email = await fetch(`${base}/api/email/start`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: "customer@example.test" }),
+  });
+  assert.equal(email.status, 503);
+});
