@@ -42,6 +42,53 @@ async function verificationCode(request: APIRequestContext, email: string) {
   return code!;
 }
 
+test("admin can close a weekday and configure overnight hours", async ({ page, request }) => {
+  const login = await request.post("/api/auth/login", {
+    data: { email: "admin@demo.local", password: "BowlingDemo2026!" },
+  });
+  expect(login.ok()).toBe(true);
+  const cookie = login.headers()["set-cookie"].split(";")[0];
+  const authHeaders = { cookie, origin: "http://127.0.0.1:5173" };
+  const originalResponse = await request.get("/api/staff/settings", { headers: authHeaders });
+  expect(originalResponse.ok()).toBe(true);
+  const originalHours = (await originalResponse.json()).weeklyHours;
+
+  try {
+    await page.context().addCookies([
+      {
+        name: "bowling_session",
+        value: cookie.slice("bowling_session=".length),
+        url: "http://127.0.0.1:5173",
+      },
+    ]);
+    await page.goto("/admin");
+    await page.getByRole("navigation", { name: "Secciones de administración" }).waitFor();
+
+    const closedMonday = page.locator('#settings [name="closed-1"]');
+    await closedMonday.check();
+    await expect(page.locator('#settings [name="open-1"]')).toBeDisabled();
+    await closedMonday.uncheck();
+    await expect(page.locator('#settings [name="open-1"]')).toBeEnabled();
+    await closedMonday.check();
+    await page.locator('#settings [name="open-0"]').fill("15:00");
+    await page.locator('#settings [name="close-0"]').fill("01:00");
+    await page.locator("#settings").getByRole("button", { name: "Guardar configuración" }).click();
+    await expect(page.locator(".notice")).toContainText("Configuración guardada y auditada");
+
+    const updatedResponse = await request.get("/api/staff/settings", { headers: authHeaders });
+    const updatedHours = (await updatedResponse.json()).weeklyHours;
+    expect(updatedResponse.ok()).toBe(true);
+    expect(updatedHours["1"]).toEqual({ closed: true });
+    expect(updatedHours["0"]).toEqual({ open: "15:00", close: "01:00" });
+  } finally {
+    const restore = await request.put("/api/staff/settings", {
+      headers: authHeaders,
+      data: { weeklyHours: originalHours },
+    });
+    expect(restore.ok()).toBe(true);
+  }
+});
+
 test("customer verifies email, requests a booking, and sees reception approval", async ({
   page,
   request,
@@ -261,9 +308,25 @@ test("reception can create a walk-in booking and check it in from the board", as
   await adminNav.getByRole("button", { name: "Auditoría" }).click();
   await expect(page.locator('[data-admin-panel="activity"]')).toBeVisible();
   await adminNav.getByRole("button", { name: "Operación" }).click();
-  await page.setViewportSize({ width: 390, height: 844 });
-  const adminLayoutWidth = await page.evaluate(() => document.documentElement.scrollWidth);
-  expect(adminLayoutWidth, "The admin workspace should fit a mobile viewport").toBe(390);
+  for (const width of [320, 360, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    const adminLayout = await page.evaluate(() => ({
+      scrollWidth: document.documentElement.scrollWidth,
+      offenders: [...document.querySelectorAll<HTMLElement>("body *")]
+        .filter((element) => element.getBoundingClientRect().right > window.innerWidth + 1)
+        .slice(0, 8)
+        .map((element) => {
+          const bounds = element.getBoundingClientRect();
+          const parent = element.parentElement;
+          const parentBounds = parent?.getBoundingClientRect();
+          return `${element.tagName.toLowerCase()}.${String(element.className).replaceAll(" ", ".")} ${Math.round(bounds.left)}–${Math.round(bounds.right)} (scroll ${element.scrollWidth}, min ${getComputedStyle(element).minWidth}; parent ${parent?.className} ${Math.round(parentBounds?.width ?? 0)} / ${getComputedStyle(parent ?? element).gridTemplateColumns})`;
+        }),
+    }));
+    expect(
+      adminLayout.scrollWidth,
+      `The admin workspace should fit a ${width}px viewport: ${adminLayout.offenders.join("; ")}`,
+    ).toBe(width);
+  }
   await page.context().clearCookies();
   const settingsResponse = await request.get("/api/staff/settings", { headers: authHeaders });
   expect(settingsResponse.ok()).toBe(true);

@@ -83,8 +83,11 @@ test("@visual admin workspace keeps settings focused on desktop and mobile", asy
   });
 
   const nav = page.getByRole("navigation", { name: "Secciones de administración" });
-  await nav.getByRole("button", { name: /Tarifas y promociones/ }).click();
   await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator(".admin-view")).toHaveScreenshot("admin-operation-mobile.png", {
+    animations: "disabled",
+  });
+  await nav.getByRole("button", { name: /Tarifas y promociones/ }).click();
   await expect(page.locator(".admin-view")).toHaveScreenshot("admin-pricing-mobile.png", {
     animations: "disabled",
   });

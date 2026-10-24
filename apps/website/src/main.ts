@@ -283,9 +283,9 @@ function renderStaff() {
           : "Administración";
   const tabs = `<nav class="staff-tabs" aria-label="Secciones de recepción"><button data-action="page" data-page="board" class="${state.page === "board" ? "current" : ""}">▦ Tablero</button><button data-action="page" data-page="requests" class="${state.page === "requests" ? "current" : ""}">◷ Solicitudes ${state.requests.length ? `<i>${state.requests.length}</i>` : ""}</button><button data-action="page" data-page="new" class="${state.page === "new" ? "current" : ""}">＋ Nueva reserva</button>${state.user.role === "admin" ? `<button data-action="page" data-page="settings" class="${state.page === "settings" ? "current" : ""}">⚙ Administración</button>` : ""}</nav>`;
   const dateControl =
-    state.page === "board"
-      ? ""
-      : `<label>Fecha<input type="date" name="board-date" value="${esc(state.board?.date ?? localDate(Date.now()))}"></label>`;
+    state.page === "new"
+      ? `<label>Fecha<input type="date" name="board-date" value="${esc(state.board?.date ?? localDate(Date.now()))}"></label>`
+      : "";
   const content =
     state.page === "board"
       ? renderBoard()
@@ -739,9 +739,15 @@ app.addEventListener("submit", async (event) => {
     if (form.id === "settings") {
       const weeklyHours: Record<string, any> = {};
       for (let n = 0; n < 7; n++) {
-        const open = v(`open-${n}`),
-          close = v(`close-${n}`);
-        weeklyHours[n] = open && close ? { open, close } : { closed: true };
+        if (d.has(`closed-${n}`)) {
+          weeklyHours[n] = { closed: true };
+          continue;
+        }
+        const open = v(`open-${n}`);
+        const close = v(`close-${n}`);
+        if (!open || !close)
+          throw new Error(`${days[n]} necesita apertura y cierre, o marca “Cerrado”.`);
+        weeklyHours[n] = { open, close };
       }
       await api("/api/staff/settings", {
         method: "PUT",
@@ -898,6 +904,16 @@ app.addEventListener("input", (event) => {
 });
 app.addEventListener("change", (event) => {
   const input = event.target as HTMLInputElement;
+  const closedDay = /^closed-(\d)$/.exec(input.name);
+  if (closedDay) {
+    const row = input.closest<HTMLElement>(".hours-day");
+    row
+      ?.querySelectorAll<HTMLInputElement>('.hours-time input[type="time"]')
+      .forEach((timeInput) => {
+        timeInput.disabled = input.checked;
+        timeInput.required = !input.checked;
+      });
+  }
   if (input.id === "board-booking-status") {
     state.boardBookingStatus = input.value;
     applyBoardFilters();

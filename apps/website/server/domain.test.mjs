@@ -236,6 +236,35 @@ test("overnight sessions stay inside the operating day that opened them", () => 
   assert.equal(matchesHours(start, end, overnightHours), true);
 });
 
+test("overnight availability stays open after midnight when the next weekday is closed", () => {
+  const date = "2026-10-31";
+  const weeklyHours = {
+    ...hours,
+    5: { open: "15:00", close: "01:00" },
+    6: { closed: true },
+  };
+  const start = localDateTimeToEpoch(`${date}T00:00`);
+  const close = localDateTimeToEpoch(`${date}T01:00`);
+
+  assert.equal(matchesHours(start, close, weeklyHours), true);
+  assert.equal(matchesHours(close, close + 60 * 60_000, weeklyHours), false);
+
+  const alternatives = findAlternatives({
+    date,
+    preferredTime: "00:00",
+    players: 4,
+    durationMinutes: 60,
+    reservations: [],
+    blocks: [],
+    settings: { ...settings, closingMarginMinutes: 0, weeklyHours },
+    limit: 100,
+  });
+  assert.equal(
+    alternatives.some((alternative) => alternative.startMs === start),
+    true,
+  );
+});
+
 test("alternatives respect preparation buffers and the optimizer is deterministic", () => {
   const date = "2027-01-08";
   const reservation = {

@@ -79,19 +79,33 @@ export function laneSetsFor(
   return sets;
 }
 
-export function matchesHours(startMs, endMs, weeklyHours, exceptions = {}) {
-  const date = formatLocalDate(startMs);
-  const rule = exceptions[date] ?? weeklyHours[String(santiagoWeekday(startMs))];
+function shiftLocalDate(date, days) {
+  const [year, month, day] = date.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+}
+
+function operatingHoursForDate(date, weeklyHours, exceptions) {
+  const weekday = new Date(`${date}T12:00:00Z`).getUTCDay();
+  const rule = exceptions?.[date] ?? weeklyHours?.[String(weekday)];
   if (!rule || rule.closed || !rule.open || !rule.close) return false;
   const open = localDateTimeToEpoch(`${date}T${rule.open}`);
   let close = localDateTimeToEpoch(`${date}T${rule.close}`);
   if (close <= open) {
-    const [y, m, d] = date.split("-").map(Number);
-    const next = new Date(Date.UTC(y, m - 1, d + 1));
-    const nextDate = `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, "0")}-${String(next.getUTCDate()).padStart(2, "0")}`;
-    close = localDateTimeToEpoch(`${nextDate}T${rule.close}`);
+    close = localDateTimeToEpoch(`${shiftLocalDate(date, 1)}T${rule.close}`);
   }
-  return startMs >= open && endMs <= close;
+  return { date, rule, openMs: open, closeMs: close };
+}
+
+function operatingHoursForInterval(startMs, endMs, weeklyHours, exceptions = {}) {
+  const date = formatLocalDate(startMs);
+  const windows = [date, shiftLocalDate(date, -1)]
+    .map((candidateDate) => operatingHoursForDate(candidateDate, weeklyHours, exceptions))
+    .filter(Boolean);
+  return windows.find((window) => startMs >= window.openMs && endMs <= window.closeMs) ?? null;
+}
+
+export function matchesHours(startMs, endMs, weeklyHours, exceptions = {}) {
+  return Boolean(operatingHoursForInterval(startMs, endMs, weeklyHours, exceptions));
 }
 
 export function calculateQuote({ startMs, durationMinutes, laneCount, settings, channel = "web" }) {
@@ -204,18 +218,15 @@ export function isLaneSetFree({ lanes, startMs, endMs, preparationMinutes, reser
   return true;
 }
 
-function laneUseImpact({ laneSet, startMs, endMs, date, reservations, blocks, settings }) {
-  const endOfDayRule =
-    settings.exceptions?.[date] ?? settings.weeklyHours[String(santiagoWeekday(startMs))];
-  if (!endOfDayRule || endOfDayRule.closed || !endOfDayRule.close) return [0, 0, 0, 0];
-  let closeMs = localDateTimeToEpoch(`${date}T${endOfDayRule.close}`);
-  if (closeMs <= startMs) {
-    const [y, m, d] = date.split("-").map(Number);
-    const next = new Date(Date.UTC(y, m - 1, d + 1));
-    closeMs = localDateTimeToEpoch(
-      `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, "0")}-${String(next.getUTCDate()).padStart(2, "0")}T${endOfDayRule.close}`,
-    );
-  }
+function laneUseImpact({ laneSet, startMs, endMs, reservations, blocks, settings }) {
+  const operatingWindow = operatingHoursForInterval(
+    startMs,
+    endMs,
+    settings.weeklyHours,
+    settings.exceptions,
+  );
+  if (!operatingWindow) return [0, 0, 0, 0];
+  const closeMs = operatingWindow.closeMs;
   const future = [
     ...reservations,
     { lanes: laneSet, startMs, endMs, preparationMinutes: settings.preparationMinutes },
@@ -285,81 +296,83 @@ export function findAlternatives({
     throw new Error("No existe una agrupación física válida para esta cantidad de pistas.");
   if (!Number.isInteger(durationMinutes) || durationMinutes < 60 || durationMinutes % 60 !== 0)
     throw new Error("La duración inicial debe ser de una o más horas completas.");
-  const rule =
-    settings.exceptions?.[date] ??
-    settings.weeklyHours[String(new Date(`${date}T12:00:00Z`).getUTCDay())];
-  if (!rule || rule.closed || !rule.open || !rule.close) return [];
-  const openMs = localDateTimeToEpoch(`${date}T${rule.open}`);
-  let closeMs = localDateTimeToEpoch(`${date}T${rule.close}`);
-  if (closeMs <= openMs) {
-    const [y, m, d] = date.split("-").map(Number);
-    const next = new Date(Date.UTC(y, m - 1, d + 1));
-    closeMs = localDateTimeToEpoch(
-      `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, "0")}-${String(next.getUTCDate()).padStart(2, "0")}T${rule.close}`,
+  const selectedDay = parseLocalDay(date);
+  const previousDate = shiftLocalDate(date, -1);
+  const windows = [date, previousDate]
+    .map((candidateDate) =>
+      operatingHoursForDate(candidateDate, settings.weeklyHours, settings.exceptions),
+    )
+    .filter(
+      (window) => window && window.openMs < selectedDay.end && window.closeMs > selectedDay.start,
     );
-  }
+  if (!windows.length) return [];
   const stepMinutes = Number(settings.startIntervalMinutes ?? 10);
   const startTime = localDateTimeToEpoch(`${date}T${preferredTime}`);
   const candidates = [];
-  for (
-    let startMs = openMs;
-    startMs + durationMinutes * 60_000 <= closeMs;
-    startMs += stepMinutes * 60_000
-  ) {
-    const endMs = startMs + durationMinutes * 60_000;
-    if (
-      !matchesHours(
-        startMs,
-        endMs + (settings.closingMarginMinutes ?? 0) * 60_000,
-        settings.weeklyHours,
-        settings.exceptions,
-      )
-    )
-      continue;
-    const future = startMs - Date.now() < settings.minimumAdvanceMinutes * 60_000;
-    if (future && !settings.allowImmediateWeb) continue;
-    let chosen = null;
-    for (const group of sets) {
+  const seenStartTimes = new Set();
+  for (const window of windows) {
+    for (
+      let startMs = window.openMs;
+      startMs + durationMinutes * 60_000 <= window.closeMs;
+      startMs += stepMinutes * 60_000
+    ) {
+      if (startMs < selectedDay.start || startMs >= selectedDay.end || seenStartTimes.has(startMs))
+        continue;
+      seenStartTimes.add(startMs);
+      const endMs = startMs + durationMinutes * 60_000;
       if (
-        !isLaneSetFree({
-          lanes: group,
+        !matchesHours(
           startMs,
-          endMs,
-          preparationMinutes: settings.preparationMinutes,
-          reservations,
-          blocks,
-        })
+          endMs + (settings.closingMarginMinutes ?? 0) * 60_000,
+          settings.weeklyHours,
+          settings.exceptions,
+        )
       )
         continue;
-      const impact = laneUseImpact({
-        laneSet: group,
-        startMs,
-        endMs,
-        date,
-        reservations,
-        blocks,
-        settings,
-      });
-      if (
-        !chosen ||
-        compareVector(impact, chosen.impact) < 0 ||
-        (compareVector(impact, chosen.impact) === 0 && group[0] < chosen.lanes[0])
-      )
-        chosen = { lanes: group, impact };
-    }
-    if (chosen) {
-      const quote = calculateQuote({ startMs, durationMinutes, laneCount, settings, channel });
-      candidates.push({
-        startMs,
-        endMs,
-        lanes: chosen.lanes,
-        laneCount,
-        minimumLanes: minLanes,
-        grouped: isPhysicallyGrouped(chosen.lanes),
-        impact: chosen.impact,
-        quote,
-        distanceMinutes: Math.abs(startMs - startTime) / 60_000,
-      });
+      const future = startMs - Date.now() < settings.minimumAdvanceMinutes * 60_000;
+      if (future && !settings.allowImmediateWeb) continue;
+      let chosen = null;
+      for (const group of sets) {
+        if (
+          !isLaneSetFree({
+            lanes: group,
+            startMs,
+            endMs,
+            preparationMinutes: settings.preparationMinutes,
+            reservations,
+            blocks,
+          })
+        )
+          continue;
+        const impact = laneUseImpact({
+          laneSet: group,
+          startMs,
+          endMs,
+          reservations,
+          blocks,
+          settings,
+        });
+        if (
+          !chosen ||
+          compareVector(impact, chosen.impact) < 0 ||
+          (compareVector(impact, chosen.impact) === 0 && group[0] < chosen.lanes[0])
+        )
+          chosen = { lanes: group, impact };
+      }
+      if (chosen) {
+        const quote = calculateQuote({ startMs, durationMinutes, laneCount, settings, channel });
+        candidates.push({
+          startMs,
+          endMs,
+          lanes: chosen.lanes,
+          laneCount,
+          minimumLanes: minLanes,
+          grouped: isPhysicallyGrouped(chosen.lanes),
+          impact: chosen.impact,
+          quote,
+          distanceMinutes: Math.abs(startMs - startTime) / 60_000,
+        });
+      }
     }
   }
   // Rank demand preservation before distance, then price as a tie-breaker. Alternatives remain explicit choices.
@@ -435,7 +448,6 @@ export function selectLaneSetAtTime({
       laneSet: lanes,
       startMs,
       endMs,
-      date: formatLocalDate(startMs),
       reservations,
       blocks,
       settings,

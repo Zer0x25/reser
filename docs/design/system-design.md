@@ -2,7 +2,7 @@
 
 **Estado:** diseño actual del MVP, con límites de evolución
 **Fecha:** 2026-10-24
-**ADRs relacionados:** [0001 — stack y límites arquitectónicos](../decisions/0001-mvp-stack.md), [0002 — ciclo de reservas y datos de demo](../decisions/0002-reservation-and-demo-boundaries.md), [0003 — estrategia de pruebas](../decisions/0003-testing-strategy.md), [0004 — dominio, casos de uso y UX](../decisions/0004-domain-use-cases-and-ux.md), [0005 — portales separados para el personal](../decisions/0005-separate-staff-portals.md)
+**ADRs relacionados:** [0001 — stack y límites arquitectónicos](../decisions/0001-mvp-stack.md), [0002 — ciclo de reservas y datos de demo](../decisions/0002-reservation-and-demo-boundaries.md), [0003 — estrategia de pruebas](../decisions/0003-testing-strategy.md), [0004 — dominio, casos de uso y UX](../decisions/0004-domain-use-cases-and-ux.md), [0005 — portales separados para el personal](../decisions/0005-separate-staff-portals.md), [0006 — jornada operativa y cierres nocturnos](../decisions/0006-overnight-operating-hours.md)
 
 ## Objetivo y alcance
 
@@ -83,7 +83,9 @@ La recepción consulta el mismo inventario. Un clic o activación por teclado en
 
 - La sede opera en `America/Santiago`; fechas del negocio se interpretan con la zona horaria del establecimiento, no con la del navegador o del servidor.
 - Las horas inexistentes durante el salto DST se rechazan. Cuando el reloj repite una hora, el conversor común selecciona el primer instante; el buscador del dominio puede exponer ambas opciones distinguibles.
-- El tablero muestra el horario de atención y puede cruzar medianoche. La duración de un día civil puede ser 23, 24 o 25 horas.
+- El horario semanal pertenece al día en que abre el local. Si el viernes abre 15:00–01:00, esa jornada termina el sábado a la 01:00; una reserva que comienza el sábado antes de esa hora se valida contra la jornada del viernes, aunque el sábado esté marcado cerrado. La disponibilidad pública se consulta por la fecha civil local en que comienza la reserva.
+- El margen de cierre se resta del último término permitido. Con cierre a la 01:00 y margen de 30 minutos, una sesión debe terminar a más tardar a las 00:30. Para admitir una sesión de una hora que comienza a las 00:00, el margen debe ser cero.
+- El tablero de recepción muestra el intervalo completo de la jornada seleccionada y puede cruzar medianoche; los intervalos del día civil siguen resolviéndose con reglas de `America/Santiago`, incluso si duran 23 o 25 horas.
 - El dominio representa parejas y agrupación física explícitamente. No se sustituye su criterio por la primera pista libre.
 - Los cambios que ocupan pistas usan transacciones `BEGIN IMMEDIATE`, idempotencia y restricciones de SQLite para evitar asignaciones incompatibles.
 

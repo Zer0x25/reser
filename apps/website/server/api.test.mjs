@@ -136,6 +136,56 @@ test("HTTP API authenticates staff and serializes competing claims on the final 
     200,
   );
 
+  const originalSettingsResponse = await fetch(`${base}/api/staff/settings`, {
+    headers: { cookie: adminCookie },
+  });
+  const originalSettings = await originalSettingsResponse.json();
+  const selectedDate = addLocalDays(formatLocalDate(Date.now()), 2);
+  const previousDate = addLocalDays(selectedDate, -1);
+  const weekdayOf = (date) => new Date(`${date}T12:00:00Z`).getUTCDay();
+  const overnightHours = {
+    ...originalSettings.weeklyHours,
+    [weekdayOf(previousDate)]: { open: "15:00", close: "01:00" },
+    [weekdayOf(selectedDate)]: { closed: true },
+  };
+  const overnightConfiguration = await fetch(`${base}/api/staff/settings`, {
+    method: "PUT",
+    headers: {
+      cookie: adminCookie,
+      origin: base,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ weeklyHours: overnightHours, closingMarginMinutes: 0 }),
+  });
+  assert.equal(overnightConfiguration.status, 200);
+  try {
+    const afterMidnight = await fetch(
+      `${base}/api/availability?date=${selectedDate}&time=00%3A00&players=4&duration=60`,
+    );
+    assert.equal(afterMidnight.status, 200);
+    const { alternatives } = await afterMidnight.json();
+    assert.ok(
+      alternatives.some(
+        (alternative) => alternative.startMs === localDateTimeToEpoch(`${selectedDate}T00:00`),
+      ),
+      "a booking at the start of this date should use the prior day's overnight rule",
+    );
+  } finally {
+    const restoreHours = await fetch(`${base}/api/staff/settings`, {
+      method: "PUT",
+      headers: {
+        cookie: adminCookie,
+        origin: base,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        weeklyHours: originalSettings.weeklyHours,
+        closingMarginMinutes: originalSettings.closingMarginMinutes,
+      }),
+    });
+    assert.equal(restoreHours.status, 200);
+  }
+
   const emails = ["one@example.test", "two@example.test"];
   const proofs = [];
   for (const email of emails) {
