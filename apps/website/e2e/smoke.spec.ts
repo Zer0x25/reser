@@ -38,6 +38,22 @@ test("@smoke reception can navigate the calendar, zoom it, and use a free lane",
   const nextDay = addDays(today, 1);
   await expect(boardDate).toHaveValue(nextDay);
 
+  const search = page.getByRole("searchbox", { name: "Encontrar reserva" });
+  await search.fill("valentina");
+  await expect(page.locator("#board-filter-count")).toHaveText("1 reserva coincide");
+  await expect(page.locator(".booking-event:not([hidden])")).toHaveCount(1);
+  const statusFilter = page.locator("#board-booking-status");
+  await statusFilter.selectOption("confirmed");
+  await expect(page.locator("#board-filter-count")).toHaveText("1 reserva coincide");
+  await statusFilter.selectOption("held");
+  await expect(page.locator("#board-filter-count")).toContainText("No encontramos reservas");
+  await statusFilter.selectOption("all");
+  await search.fill("no existe");
+  await expect(page.locator(".booking-event:not([hidden])")).toHaveCount(0);
+  await page.getByRole("button", { name: "Limpiar filtros" }).click();
+  await expect(search).toHaveValue("");
+  await expect.poll(() => page.locator(".booking-event:not([hidden])").count()).toBeGreaterThan(1);
+
   const range = page.locator(".calendar-range-button");
   await range.click();
   await expect(range.locator(".calendar-range-label")).not.toHaveText("Total");
@@ -52,12 +68,45 @@ test("@smoke reception can navigate the calendar, zoom it, and use a free lane",
 
 test("@smoke @visual mobile reception can zoom and scroll the calendar", async ({ page }) => {
   await page.clock.install({ time: new Date("2026-10-24T15:00:00-03:00") });
+  await page.route("**/api/staff/board?*", async (route) => {
+    const response = await route.fetch();
+    const board = await response.json();
+    const start = board.axisStartMs + 60 * 60_000;
+    await route.fulfill({
+      response,
+      json: {
+        ...board,
+        reservations: [
+          {
+            id: "visual-demo-booking",
+            code: "V-DEMO01",
+            customerName: "Reserva de prueba",
+            customerPhone: "+56900000000",
+            start,
+            end: start + 60 * 60_000,
+            players: 4,
+            laneCount: 1,
+            lanes: [1],
+            status: "confirmed",
+            utcOffset: "-03:00",
+          },
+        ],
+      },
+    });
+  });
+  await page.route("**/api/staff/requests", (route) => route.fulfill({ json: { requests: [] } }));
   await page.goto("/recepcion");
   await page.locator('#login [name="email"]').fill("recepcion@demo.local");
   await page.locator('#login [name="password"]').fill("BowlingDemo2026!");
   await page.getByRole("button", { name: "Ingresar →" }).click();
   await expect(page.getByRole("heading", { name: "Tablero de pistas" })).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator(".metrics")).toHaveScreenshot("reception-metrics-mobile.png", {
+    animations: "disabled",
+  });
+  await expect(page.locator(".board-filterbar")).toHaveScreenshot("reception-filters-mobile.png", {
+    animations: "disabled",
+  });
   await expect(page.locator(".calendar-controls")).toHaveScreenshot(
     "reception-calendar-controls-mobile.png",
     { animations: "disabled" },

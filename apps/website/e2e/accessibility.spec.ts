@@ -60,6 +60,25 @@ test("public booking and reception board meet automated WCAG checks", async ({ p
   expect(violationSummary(bookingDetail.violations)).toBe("");
 });
 
+test("admin workspace meets automated WCAG checks across sections", async ({ page }) => {
+  await page.goto("/admin");
+  await page.locator('#login [name="email"]').fill("admin@demo.local");
+  await page.locator('#login [name="password"]').fill("BowlingDemo2026!");
+  await page.getByRole("button", { name: "Ingresar →" }).click();
+  await expect(page.getByRole("heading", { name: "Administración" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Secciones de administración" })).toBeVisible();
+
+  const general = await new AxeBuilder({ page }).withTags(wcagTags).analyze();
+  expect(violationSummary(general.violations)).toBe("");
+
+  await page
+    .getByRole("navigation", { name: "Secciones de administración" })
+    .getByRole("button", { name: /Tarifas y promociones/ })
+    .click();
+  const pricing = await new AxeBuilder({ page }).withTags(wcagTags).analyze();
+  expect(violationSummary(pricing.violations)).toBe("");
+});
+
 test("reception layout fits tablet and laptop viewports", async ({ page }) => {
   await page.setViewportSize({ width: 768, height: 1024 });
   await page.goto("/");

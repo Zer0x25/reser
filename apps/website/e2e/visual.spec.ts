@@ -70,3 +70,22 @@ test("@visual public booking screens match mobile visual baselines", async ({ pa
     animations: "disabled",
   });
 });
+
+test("@visual admin workspace keeps settings focused on desktop and mobile", async ({ page }) => {
+  await page.goto("/admin");
+  await page.locator('#login [name="email"]').fill("admin@demo.local");
+  await page.locator('#login [name="password"]').fill("BowlingDemo2026!");
+  await page.getByRole("button", { name: "Ingresar →" }).click();
+  await expect(page.getByRole("navigation", { name: "Secciones de administración" })).toBeVisible();
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await expect(page.locator(".admin-view")).toHaveScreenshot("admin-operation-desktop.png", {
+    animations: "disabled",
+  });
+
+  const nav = page.getByRole("navigation", { name: "Secciones de administración" });
+  await nav.getByRole("button", { name: /Tarifas y promociones/ }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator(".admin-view")).toHaveScreenshot("admin-pricing-mobile.png", {
+    animations: "disabled",
+  });
+});
