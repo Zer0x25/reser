@@ -56,6 +56,7 @@ test("customer verifies email, requests a booking, and sees reception approval",
   await page.getByRole("button", { name: "Buscar horarios →" }).click();
   await expect(page.locator(".option-card").first()).toBeVisible();
   await page.locator(".option-card").first().locator('[data-action="select"]').click();
+  await expect(page.locator('#request [name="name"]')).toBeFocused();
 
   const customerName = `E2E Aprobación ${Date.now()}`;
   const email = `booking-${Date.now()}@example.test`;
@@ -71,6 +72,8 @@ test("customer verifies email, requests a booking, and sees reception approval",
 
   const result = page.locator(".result-card");
   await expect(result).toContainText("Pendiente de aprobación de recepción");
+  await expect(page.locator(".option-card")).toHaveCount(0);
+  await expect(result).toBeFocused();
   const manageLink = await result
     .getByRole("link", { name: /Ver seguimiento seguro/ })
     .getAttribute("href");

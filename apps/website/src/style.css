@@ -2508,3 +2508,51 @@ footer {
   min-width: 0;
   max-width: 100%;
 }
+
+@media (max-width: 700px) {
+  .search-grid label,
+  .request-card label {
+    font-size: 12px;
+  }
+  .search-grid input,
+  .search-grid select,
+  .request-card input {
+    min-height: 44px;
+    height: 44px;
+    padding-inline: 10px;
+    font-size: 16px;
+  }
+  .option-time small,
+  .option-price small {
+    font-size: 10px;
+  }
+  .option-info .tag {
+    padding: 6px 7px;
+    font-size: 10px;
+    line-height: 1.3;
+    white-space: normal;
+  }
+  .option-info p {
+    font-size: 12px;
+  }
+  .option-card > .button {
+    min-height: 40px;
+    font-size: 11px;
+  }
+  .verify-row small {
+    font-size: 11px;
+  }
+}
+
+@media (max-width: 360px) {
+  .search-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .search-button {
+    grid-column: 1;
+  }
+}
+
+.result-card {
+  scroll-margin-block: 16px;
+}

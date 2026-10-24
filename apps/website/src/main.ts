@@ -185,7 +185,7 @@ function renderRequestForm() {
 }
 function renderResult() {
   const r = state.result;
-  return `<section class="result-card ${r.status === "confirmed" ? "confirmed" : "pending"}"><span>${r.status === "confirmed" ? "✓" : "◷"}</span><div><small class="eyebrow">SOLICITUD ${esc(r.code)}</small><h3>${esc(r.statusLabel)}</h3><p>${r.status === "confirmed" ? "Tu espacio quedó confirmado. Guarda el enlace seguro para consultar los detalles." : "El horario quedó retenido mientras recepción revisa la solicitud. Te avisaremos por correo."}</p>${r.notificationPending ? `<p>La solicitud sí quedó guardada; estamos reintentando enviar el correo con el enlace seguro.</p>` : ""}${r.manageLink ? `<a class="button outline" href="${esc(r.manageLink)}">Ver seguimiento seguro →</a>` : ""}</div></section>`;
+  return `<section class="result-card ${r.status === "confirmed" ? "confirmed" : "pending"}" tabindex="-1"><span>${r.status === "confirmed" ? "✓" : "◷"}</span><div><small class="eyebrow">SOLICITUD ${esc(r.code)}</small><h3>${esc(r.statusLabel)}</h3><p>${r.status === "confirmed" ? "Tu espacio quedó confirmado. Guarda el enlace seguro para consultar los detalles." : "El horario quedó retenido mientras recepción revisa la solicitud. Te avisaremos por correo."}</p>${r.notificationPending ? `<p>La solicitud sí quedó guardada; estamos reintentando enviar el correo con el enlace seguro.</p>` : ""}${r.manageLink ? `<a class="button outline" href="${esc(r.manageLink)}">Ver seguimiento seguro →</a>` : ""}</div></section>`;
 }
 function renderManage() {
   const b = state.managed;
@@ -531,6 +531,7 @@ app.addEventListener("submit", async (event) => {
       state.requestEmail = "";
       state.verificationCode = "";
       state.requestTermsAccepted = false;
+      state.options = [];
       say(
         result.status === "confirmed"
           ? "Tu reserva quedó confirmada."
@@ -538,6 +539,9 @@ app.addEventListener("submit", async (event) => {
         "success",
       );
       render();
+      const resultCard = document.querySelector<HTMLElement>(".result-card");
+      resultCard?.scrollIntoView({ behavior: "smooth", block: "center" });
+      resultCard?.focus({ preventScroll: true });
       return;
     }
     if (form.id === "manage-renew") {
@@ -920,6 +924,9 @@ app.addEventListener("click", async (event) => {
       state.requestKey = randomIdempotencyKey();
       render();
       document.querySelector(".request-card")?.scrollIntoView({ behavior: "smooth" });
+      document.querySelector<HTMLInputElement>('#request [name="name"]')?.focus({
+        preventScroll: true,
+      });
     }
     if (action === "clear-selection") {
       state.selected = null;
