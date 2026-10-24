@@ -10,6 +10,7 @@ El MVP contiene reglas sensibles de disponibilidad, tarifas, autorización e inv
 ## Decisión
 
 - Mantener `node:test` para dominio y API; las pruebas API levantan el proceso real con SQLite temporal y cubren autenticación, concurrencia, reoptimización localizada, reservas fijadas y rollback.
+- Mantener una jornada sintética repetible para comparar la política del motor con primera hora libre, cercanía y compactación sencilla, incluyendo solicitudes aceptadas, horas-pista, ingresos ilustrativos, desvío horario y capacidad residual por perfiles independientes.
 - Usar Vite+ Test/Vitest para cálculos puros de presentación como rangos y zoom del calendario.
 - Usar Playwright/Chromium para flujos E2E críticos: verificación de correo local, solicitud/aprobación, aceptación de precio, renovación/cancelación, reserva presencial/check-in/extensión, interacción por teclado y calendario móvil.
 - Ejecutar axe para criterios WCAG 2.0/2.1/2.2 A y AA en búsqueda, solicitud, tablero, bandeja, ficha modal, renovación y extensión. Comprobar reflow en 320–428 px y 768/1024 px.
@@ -23,6 +24,7 @@ El MVP contiene reglas sensibles de disponibilidad, tarifas, autorización e inv
 
 - Hay un navegador real en CI, lo que detecta errores de interacción y carga que una compilación no encuentra; el workflow tarda más y requiere instalar Chromium.
 - Las pruebas API siguen siendo independientes de browser y preservan cobertura directa de reglas transaccionales.
+- El benchmark evidencia los intercambios de esta heurística en una cola sintética; no demuestra un óptimo global ni predice resultados comerciales reales.
 - La base temporal evita contaminar los datos manuales de demo y facilita repetir ejecuciones.
 - `main.ts` no se divide completamente en esta decisión; nuevas extracciones deben responder a un límite funcional probado.
 - El smoke de artefacto compilado puede correr localmente; el smoke de URL desplegada queda pendiente hasta disponer de hosting y un entorno de preview.

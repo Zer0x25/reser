@@ -29,6 +29,7 @@ El workflow de GitHub corre `regression` en cada push y pull request e instala C
 
 - **Dominio y hora:** capacidad, parejas físicas, agrupación, buffers de preparación, excepciones, horarios nocturnos, DST y cálculo determinista de alternativas. Las pruebas comparan los criterios de primera opción, cercanía y compactación básica; esto no demuestra optimalidad global del optimizador.
 - **Escenarios sintéticos del motor:** una jornada con compromisos y mantenimiento valida siete tamaños representativos, agrupación física y ausencia de conflictos; casos de 5/10 minutos verifican la siguiente hora posible. Un día con ocupación predefinida compara el vector de capacidad preservada del motor con primero libre, hora más cercana y compactación sencilla.
+- **Simulación de jornada completa:** `pnpm exec vp run simulate:engine` reproduce una cola de doce solicitudes contra inventario y bloqueos fijos, y compara cuatro políticas. Reporta aceptación, rechazos, horas-pista, ingreso ilustrativo, desvío medio y capacidad residual por perfil. Las pruebas fijan los resultados de esta fixture y comprueban que todas las asignaciones sean factibles.
 - **API e inventario:** autenticación/roles, SQLite, escrituras repetidas, solicitudes que compiten por la última capacidad, seguimiento y operaciones manuales.
 - **Reoptimización por API:** dos asignaciones flexibles se reorganizan; una reserva fijada conserva su pista; la decisión queda auditada. Un bloqueo que hace imposible la reorganización fuerza un `409` y la prueba confirma que las asignaciones previas se restauran y no quedan eventos parciales de auditoría.
 - **Cliente web:** verificación local de correo, solicitud de tres o más pistas, aprobación humana, recotización y aceptación del nuevo importe, renovación de enlace vencido y cancelación elegible.
@@ -37,6 +38,14 @@ El workflow de GitHub corre `regression` en cada push y pull request e instala C
 - **Reflow:** el documento no puede exceder el viewport de 320, 360, 375, 390, 414, 428, 768 ni 1024 px. El eje de horas del calendario puede desplazarse dentro de su contenedor horizontal propio.
 
 Los datos de Playwright son efímeros. Un test restaura las horas de demo después de una extensión; el test que cambia la tarifa la restaura incluso si falla. Cada test usa un proceso de Playwright y una ruta SQLite temporal independiente del archivo local `data/demo.sqlite`. La integración de reoptimización usa SQLite temporal y una fixture directa para representar una asignación ya fijada y un bloqueo operativo tardío.
+
+### Lectura del benchmark sintético
+
+En la jornada de referencia, la política del motor acepta 6 de 12 solicitudes, vende 48 horas-pista y suma CLP 576.000 ilustrativos; la política más cercana acepta 7, vende 43 horas-pista y suma CLP 516.000, con menor desvío de la hora pedida. La política de compactación simple acepta 6 y promedia 82 minutos de desvío. Este caso muestra un intercambio entre volumen vendido y cercanía; no demuestra que una política sea mejor con demanda real.
+
+La tarifa fija de CLP 12.000 por pista-hora y todos los nombres son sintéticos. La política de motor simula que el cliente toma la alternativa con mejor puntuación de preservación; en producción se muestran opciones y el cliente elige, por lo que `Con horario simulado` no equivale a conversión ni reserva real. Los baselines cambian la selección temporal, pero usan las agrupaciones factibles que entrega el motor.
+
+La capacidad residual se estima con sesiones consecutivas de inicio más temprano para cuatro perfiles, cada uno sobre una copia independiente del horario. Esos valores no se suman: representan pruebas alternativas de demanda y sus sesiones pueden competir entre sí.
 
 ## Datos, correo y reportes
 

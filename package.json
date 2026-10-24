@@ -14,6 +14,7 @@
     "e2e:install": "vp run website#e2e:install",
     "smoke": "vp run website#smoke",
     "smoke:preview": "vp run website#smoke:preview",
+    "simulate:engine": "vp run website#simulate:engine",
     "dev": "vp run website#dev",
     "prepare": "vp config"
   },

@@ -96,6 +96,8 @@ La estrategia operativa está en [Testing strategy](../testing/strategy.md). La 
 
 La cobertura dirigida disponible es 88.07% de líneas, 83.04% de ramas y 95.35% de funciones para dominio/tiempo; `calendar.ts` registra 100% en las tres métricas. No hay una cifra global porque la API HTTP y las vistas no están instrumentadas en estos reportes. No se fija un umbral global hasta tener esa línea base. axe automatiza criterios WCAG en los estados indicados; no reemplaza una revisión manual con teclado y lector de pantalla ni cubre todos los estados.
 
+La jornada comparativa reproducible se ejecuta con `pnpm exec vp run simulate:engine`. Sus importes usan una tarifa sintética y sus perfiles de capacidad se miden por separado; los resultados muestran compromisos entre volumen de venta y cercanía, no una predicción comercial.
+
 ## Despliegue y operación
 
 La producción empieza cerrada si no hay horarios, tarifas, cuenta de administración, secreto estable, almacenamiento persistente y proveedor de correo. La vista previa debe utilizar datos sintéticos y nunca mandar pagos ni correos reales. Actualmente no hay pipeline de despliegue automático: el workflow de calidad ejecuta checks, pruebas, E2E y smoke del artefacto compilado, pero no publica.
