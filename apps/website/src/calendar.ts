@@ -57,8 +57,32 @@ export function calendarStartAtFraction(
   intervalMs: number,
   fraction: number,
 ) {
+  const boundary = calendarBoundaryAtFraction(axisStartMs, axisEndMs, intervalMs, fraction);
+  return Math.max(
+    Math.ceil(axisStartMs / intervalMs) * intervalMs,
+    Math.min(axisEndMs - intervalMs, boundary),
+  );
+}
+
+export function calendarBoundaryAtFraction(
+  axisStartMs: number,
+  axisEndMs: number,
+  intervalMs: number,
+  fraction: number,
+) {
   const normalizedFraction = Math.max(0, Math.min(1, fraction));
-  const offset =
-    Math.round(((axisEndMs - axisStartMs) * normalizedFraction) / intervalMs) * intervalMs;
-  return Math.max(axisStartMs, Math.min(axisEndMs - intervalMs, axisStartMs + offset));
+  const instant = axisStartMs + (axisEndMs - axisStartMs) * normalizedFraction;
+  const firstBoundary = Math.ceil(axisStartMs / intervalMs) * intervalMs;
+  const lastBoundary = Math.floor(axisEndMs / intervalMs) * intervalMs;
+  const nearestBoundary = Math.round(instant / intervalMs) * intervalMs;
+  return Math.max(firstBoundary, Math.min(lastBoundary, nearestBoundary));
+}
+
+export function durationOptions(intervalMinutes: number, minimum = 60, maximum = 240) {
+  const interval = Math.max(1, Math.floor(intervalMinutes));
+  const first = Math.ceil(minimum / interval) * interval;
+  return Array.from(
+    { length: Math.floor((maximum - first) / interval) + 1 },
+    (_, index) => first + index * interval,
+  );
 }

@@ -265,6 +265,37 @@ test("overnight availability stays open after midnight when the next weekday is 
   );
 });
 
+test("availability accepts durations composed of configured calendar blocks", () => {
+  const alternatives = findAlternatives({
+    date: "2027-01-08",
+    preferredTime: "18:00",
+    players: 4,
+    durationMinutes: 70,
+    reservations: [],
+    blocks: [],
+    settings: { ...settings, startIntervalMinutes: 10 },
+    limit: 100,
+  });
+  assert.ok(alternatives.length > 0);
+  assert.equal(
+    alternatives.every((alternative) => alternative.endMs - alternative.startMs === 70 * 60_000),
+    true,
+  );
+  assert.throws(
+    () =>
+      findAlternatives({
+        date: "2027-01-08",
+        preferredTime: "18:00",
+        players: 4,
+        durationMinutes: 65,
+        reservations: [],
+        blocks: [],
+        settings: { ...settings, startIntervalMinutes: 10 },
+      }),
+    /bloques de 10 minutos/,
+  );
+});
+
 test("alternatives respect preparation buffers and the optimizer is deterministic", () => {
   const date = "2027-01-08";
   const reservation = {

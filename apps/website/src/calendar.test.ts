@@ -1,8 +1,10 @@
 import { expect, test } from "vite-plus/test";
 import {
   addCalendarDays,
+  calendarBoundaryAtFraction,
   calendarRanges,
   calendarStartAtFraction,
+  durationOptions,
   isWithinOperatingHours,
   shiftCalendarRange,
   visibleCalendarRange,
@@ -40,6 +42,16 @@ test("clicking the calendar selects the nearest valid interval within the operat
   expect(calendarStartAtFraction(0, 10 * minute, minute, 0.26)).toBe(3 * minute);
   expect(calendarStartAtFraction(0, 10 * minute, minute, -1)).toBe(0);
   expect(calendarStartAtFraction(0, 10 * minute, minute, 1)).toBe(9 * minute);
+  expect(calendarBoundaryAtFraction(5 * minute, 25 * minute, 10 * minute, 0)).toBe(10 * minute);
+  expect(calendarStartAtFraction(5 * minute, 25 * minute, 10 * minute, 0)).toBe(10 * minute);
+  expect(calendarBoundaryAtFraction(0, 25 * minute, 10 * minute, 1)).toBe(20 * minute);
+});
+
+test("booking durations divide into configurable calendar blocks", () => {
+  expect(durationOptions(10)).toEqual([
+    60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200, 210, 220, 230, 240,
+  ]);
+  expect(durationOptions(15, 15, 60)).toEqual([15, 30, 45, 60]);
 });
 
 test("manual calendar starts use the operating interval supplied by the API", () => {

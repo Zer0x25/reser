@@ -8,6 +8,46 @@ function addDays(date: string, days: number) {
   return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
 }
 
+function venueDate(daysAhead = 0) {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Santiago",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    })
+      .formatToParts(new Date())
+      .map((part) => [part.type, part.value]),
+  );
+  return addDays(`${parts.year}-${parts.month}-${parts.day}`, daysAhead);
+}
+
+function venueInstant(date: string, time: string) {
+  const target = `${date}T${time}`;
+  const approximate = Date.parse(`${target}:00Z`);
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Santiago",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
+  for (
+    let instant = approximate - 4 * 3_600_000;
+    instant <= approximate + 4 * 3_600_000;
+    instant += 60_000
+  ) {
+    const parts = Object.fromEntries(
+      formatter.formatToParts(new Date(instant)).map((part) => [part.type, part.value]),
+    );
+    if (`${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}` === target)
+      return instant;
+  }
+  throw new Error(`No se pudo resolver la hora de Santiago ${target}`);
+}
+
 function violationSummary(violations: Awaited<ReturnType<AxeBuilder["analyze"]>>["violations"]) {
   return violations
     .flatMap((violation) =>
@@ -51,7 +91,8 @@ test("admin can close a weekday and configure overnight hours", async ({ page, r
   const authHeaders = { cookie, origin: "http://127.0.0.1:5173" };
   const originalResponse = await request.get("/api/staff/settings", { headers: authHeaders });
   expect(originalResponse.ok()).toBe(true);
-  const originalHours = (await originalResponse.json()).weeklyHours;
+  const originalSettings = await originalResponse.json();
+  const originalHours = originalSettings.weeklyHours;
 
   try {
     await page.context().addCookies([
@@ -80,12 +121,167 @@ test("admin can close a weekday and configure overnight hours", async ({ page, r
     expect(updatedResponse.ok()).toBe(true);
     expect(updatedHours["1"]).toEqual({ closed: true });
     expect(updatedHours["0"]).toEqual({ open: "15:00", close: "01:00" });
+    await page.locator('#settings [name="step"]').selectOption("15");
+    await page.locator("#settings").getByRole("button", { name: "Guardar configuración" }).click();
+    await expect(page.locator(".notice")).toContainText("Configuración guardada y auditada");
+    const updatedInterval = await request.get("/api/staff/settings", { headers: authHeaders });
+    expect((await updatedInterval.json()).startIntervalMinutes).toBe(15);
   } finally {
     const restore = await request.put("/api/staff/settings", {
       headers: authHeaders,
-      data: { weeklyHours: originalHours },
+      data: {
+        weeklyHours: originalHours,
+        startIntervalMinutes: originalSettings.startIntervalMinutes,
+      },
     });
     expect(restore.ok()).toBe(true);
+  }
+});
+
+test("calendar drag selects a reservation from configurable ten-minute blocks", async ({
+  page,
+  request,
+}) => {
+  const login = await request.post("/api/auth/login", {
+    data: { email: "recepcion@demo.local", password: "BowlingDemo2026!" },
+  });
+  expect(login.ok()).toBe(true);
+  const cookie = login.headers()["set-cookie"].split(";")[0];
+  const date = venueDate(31);
+  await page.context().addCookies([
+    {
+      name: "bowling_session",
+      value: cookie.slice("bowling_session=".length),
+      url: "http://127.0.0.1:5173",
+    },
+  ]);
+  await page.goto("/recepcion");
+  await expect(page.getByRole("heading", { name: "Tablero de pistas" })).toBeVisible();
+  const boardDate = page.locator('.calendar-date-picker input[name="board-date"]');
+  await boardDate.fill(date);
+  await boardDate.dispatchEvent("change");
+  await expect(page.locator('.track[data-lane-id="1"]')).toBeVisible();
+
+  const boardResponse = await request.get(`/api/staff/board?date=${date}`, {
+    headers: { cookie },
+  });
+  expect(boardResponse.ok()).toBe(true);
+  const board = await boardResponse.json();
+  const startMs = venueInstant(date, "17:00");
+  const endMs = venueInstant(date, "18:10");
+  const track = page.locator('.track[data-lane-id="1"]');
+  const bounds = await track.boundingBox();
+  expect(bounds).not.toBeNull();
+  const spanMs = board.axisEndMs - board.axisStartMs;
+  const startX = bounds!.x + ((startMs - board.axisStartMs) / spanMs) * bounds!.width;
+  const endX = bounds!.x + ((endMs - board.axisStartMs) / spanMs) * bounds!.width;
+  const y = bounds!.y + bounds!.height / 2;
+  await page.mouse.move(startX, y);
+  await page.mouse.down();
+  await page.mouse.move(endX, y, { steps: 8 });
+  await page.mouse.up();
+
+  await expect(page.locator("#manual")).toBeVisible();
+  await expect(page.locator('#manual [name="startAt"]')).toHaveValue(`${date}T17:00`);
+  await expect(page.locator('#manual [name="duration"]')).toHaveValue("70");
+});
+
+test("reception can move a booking with the mouse and protect its lane assignment", async ({
+  page,
+  request,
+}) => {
+  const login = await request.post("/api/auth/login", {
+    data: { email: "recepcion@demo.local", password: "BowlingDemo2026!" },
+  });
+  expect(login.ok()).toBe(true);
+  const cookie = login.headers()["set-cookie"].split(";")[0];
+  const authHeaders = { cookie, origin: "http://127.0.0.1:5173" };
+  const date = venueDate(32);
+  const startMs = venueInstant(date, "17:00");
+  const create = await request.post("/api/staff/bookings", {
+    headers: authHeaders,
+    data: {
+      idempotencyKey: `e2e-calendar-move-${Date.now()}`,
+      channel: "phone",
+      customerName: "Reserva movida con mouse",
+      phone: "+56912345678",
+      players: 4,
+      startAt: `${date}T17:00`,
+      startMs,
+      durationMinutes: 60,
+    },
+  });
+  const created = await create.json();
+  expect(create.status(), JSON.stringify(created)).toBe(201);
+  const booking = created.booking;
+
+  try {
+    await page.context().addCookies([
+      {
+        name: "bowling_session",
+        value: cookie.slice("bowling_session=".length),
+        url: "http://127.0.0.1:5173",
+      },
+    ]);
+    await page.goto("/recepcion");
+    await expect(page.getByRole("heading", { name: "Tablero de pistas" })).toBeVisible();
+    const boardDate = page.locator('.calendar-date-picker input[name="board-date"]');
+    await boardDate.fill(date);
+    await boardDate.dispatchEvent("change");
+    const event = page.locator(`.booking-event[data-id="${booking.id}"]`).first();
+    await expect(event).toBeVisible();
+    await event.click();
+    await page.locator(".modal").getByRole("button", { name: "Fijar pistas" }).click();
+    await expect(page.getByRole("status")).toContainText("Reserva fijada");
+    await page.locator(".modal button.close").click();
+
+    const boardResponse = await request.get(`/api/staff/board?date=${date}`, {
+      headers: { cookie },
+    });
+    const board = await boardResponse.json();
+    const boardBooking = board.reservations.find((item: any) => item.id === booking.id);
+    const laneId = boardBooking.lanes[0];
+    const track = page.locator(`.track[data-lane-id="${laneId}"]`);
+    const bounds = await track.boundingBox();
+    expect(bounds).not.toBeNull();
+    const movedStart = venueInstant(date, "18:00");
+    const targetX =
+      bounds!.x +
+      ((movedStart - board.axisStartMs) / (board.axisEndMs - board.axisStartMs)) * bounds!.width;
+    await event.dragTo(track, {
+      targetPosition: { x: targetX - bounds!.x, y: bounds!.height / 2 },
+    });
+    await expect(page.getByRole("status")).toContainText("Reserva movida y fijada");
+
+    const updatedResponse = await request.get(`/api/staff/board?date=${date}`, {
+      headers: { cookie },
+    });
+    const updated = (await updatedResponse.json()).reservations.find(
+      (item: any) => item.id === booking.id,
+    );
+    expect(updated.start).toBe(movedStart);
+    expect(updated.manualLaneLock).toBe(true);
+    expect(updated.lanes).toContain(laneId);
+
+    await page.locator(`.booking-event[data-id="${booking.id}"]`).first().click();
+    await page.locator(".modal").getByRole("button", { name: "Mover horario" }).click();
+    await page.locator('#reschedule [name="startAt"]').fill(`${date}T19:00`);
+    await page.locator("#reschedule button.primary").click();
+    await expect(page.getByRole("status")).toContainText("Reserva movida y fijada");
+    const keyboardMoveResponse = await request.get(`/api/staff/board?date=${date}`, {
+      headers: { cookie },
+    });
+    const keyboardMoved = (await keyboardMoveResponse.json()).reservations.find(
+      (item: any) => item.id === booking.id,
+    );
+    expect(keyboardMoved.start).toBe(venueInstant(date, "19:00"));
+    expect(keyboardMoved.manualLaneLock).toBe(true);
+  } finally {
+    const cancelled = await request.post(`/api/staff/bookings/${booking.id}/cancel`, {
+      headers: authHeaders,
+      data: {},
+    });
+    expect(cancelled.ok()).toBe(true);
   }
 });
 
@@ -335,7 +531,7 @@ test("reception can create a walk-in booking and check it in from the board", as
 
   const startMs = Math.ceil((Date.now() + 30_000) / 600_000) * 600_000;
   const endMs = startMs + 60 * 60_000;
-  const extendedEndMs = endMs + 15 * 60_000;
+  const extendedEndMs = endMs + 10 * 60_000;
   const localParts = (instant: number) =>
     Object.fromEntries(
       new Intl.DateTimeFormat("en-CA", {
@@ -412,11 +608,31 @@ test("reception can create a walk-in booking and check it in from the board", as
 
     await page.locator('[data-action="booking"]').filter({ hasText: "E2E Check-in" }).click();
     await expect(page.locator(".modal .detail-grid")).toContainText("occupied");
-    await page.locator(".modal").getByRole("button", { name: "Extender" }).click();
+    await page.locator(".modal button.close").click();
+    const activeEvent = page.locator('[data-action="booking"]').filter({ hasText: "E2E Check-in" });
+    const resizeHandle = activeEvent.locator(".booking-resize-handle");
+    await expect(resizeHandle).toBeVisible();
+    const laneId = Number(await activeEvent.getAttribute("data-lane-id"));
+    const track = page.locator(`.track[data-lane-id="${laneId}"]`);
+    const trackBounds = await track.boundingBox();
+    const handleBounds = await resizeHandle.boundingBox();
+    expect(trackBounds).not.toBeNull();
+    expect(handleBounds).not.toBeNull();
+    const axisStartMs = Number(await track.getAttribute("data-axis-start"));
+    const axisEndMs = Number(await track.getAttribute("data-axis-end"));
+    const extensionX =
+      trackBounds!.x +
+      ((extendedEndMs - axisStartMs) / (axisEndMs - axisStartMs)) * trackBounds!.width;
+    const extensionY = handleBounds!.y + handleBounds!.height / 2;
+    await page.mouse.move(handleBounds!.x + handleBounds!.width / 2, extensionY);
+    await page.mouse.down();
+    await page.mouse.move(extensionX, extensionY, { steps: 4 });
+    await page.mouse.up();
     const extensionDialog = page.locator(".modal");
+    await expect(extensionDialog.locator("#extend")).toBeVisible();
+    await expect(extensionDialog.locator('#extend [name="minutes"]')).toHaveValue("10");
     const extensionAccessibility = await new AxeBuilder({ page }).withTags(wcagTags).analyze();
     expect(violationSummary(extensionAccessibility.violations)).toBe("");
-    await extensionDialog.locator('#extend [name="minutes"]').selectOption("15");
     await extensionDialog.locator('#extend [name="accepted"]').check();
     await extensionDialog.locator("#extend button.primary").click();
     await expect(page.getByRole("status")).toContainText("Extensión autorizada y registrada");

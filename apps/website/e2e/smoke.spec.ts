@@ -63,7 +63,7 @@ test("@smoke reception can navigate the calendar, zoom it, and use a free lane",
   await page.locator('[data-action="calendar-slot"]').first().press("Enter");
   await expect(page.locator("#manual")).toBeVisible();
   await expect(page.locator('#manual [name="startAt"]')).toHaveValue(new RegExp(`^${today}T`));
-  await expect(page.getByRole("status")).toContainText("Inicio precargado");
+  await expect(page.getByRole("status")).toContainText("Bloque seleccionado");
 });
 
 test("@smoke @visual mobile reception can zoom and scroll the calendar", async ({ page }) => {

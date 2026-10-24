@@ -2,8 +2,10 @@ import "./style.css";
 import { renderAdminView } from "./views/admin";
 import {
   addCalendarDays,
+  calendarBoundaryAtFraction,
   calendarRanges,
   calendarStartAtFraction,
+  durationOptions,
   isWithinOperatingHours,
   shiftCalendarRange,
   visibleCalendarRange,
@@ -106,6 +108,8 @@ const state: any = {
   manualKey: null,
   manualStartAt: null as string | null,
   manualStartMs: null as number | null,
+  manualDurationMinutes: null as number | null,
+  pendingExtensionMinutes: null as number | null,
 };
 function esc(x: string | number | boolean | null | undefined) {
   return String(x ?? "").replace(
@@ -122,6 +126,12 @@ function money(n: number) {
     currency: "CLP",
     maximumFractionDigits: 0,
   }).format(n);
+}
+function durationLabel(minutes: number) {
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  if (!remainder) return `${hours} ${hours === 1 ? "hora" : "horas"}`;
+  return `${hours ? `${hours} h ` : ""}${remainder} min`;
 }
 function dateText(date: string) {
   return new Intl.DateTimeFormat("es-CL", { dateStyle: "full", timeZone: "UTC" }).format(
@@ -158,12 +168,87 @@ async function api<T = any>(path: string, init: RequestInit = {}): Promise<T> {
     );
   }
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.error ?? "Ocurrió un error.");
+  if (!response.ok) {
+    const error = new Error(body.error ?? "Ocurrió un error.");
+    Object.assign(error, body);
+    throw error;
+  }
   return body as T;
 }
 function say(text: string, kind = "info") {
   state.message = text;
   state.kind = kind;
+}
+function openCalendarReservation(startMs: number, date: string, durationMinutes = 60) {
+  const hours = state.board.operatingHours;
+  const endMs = startMs + durationMinutes * 60_000;
+  const lastAllowedEnd = hours.endMs - (state.config?.closingMarginMinutes ?? 0) * 60_000;
+  if (!isWithinOperatingHours(startMs, hours) || endMs > lastAllowedEnd) {
+    say("Ese bloque no cabe dentro del horario de atención y el margen de cierre.", "info");
+    render();
+    return;
+  }
+  state.manualStartAt = localDateTime(startMs);
+  state.manualStartMs = startMs;
+  state.manualDurationMinutes = durationMinutes;
+  state.date = date;
+  state.page = "new";
+  say(
+    `Bloque seleccionado: ${dateText(localDate(startMs))} · ${time(startMs)}–${time(endMs)}. La disponibilidad se validará al guardar.`,
+    "info",
+  );
+  render();
+  document.querySelector<HTMLInputElement>('#manual [name="name"]')?.focus();
+}
+function trackTimeAtPointer(track: HTMLElement, clientX: number, boundary = false) {
+  const axisStart = Number(track.dataset.axisStart);
+  const axisEnd = Number(track.dataset.axisEnd);
+  const intervalMs = (state.config?.startIntervalMinutes ?? 10) * 60_000;
+  const bounds = track.getBoundingClientRect();
+  const fraction = bounds.width
+    ? Math.max(0, Math.min(1, (clientX - bounds.left) / bounds.width))
+    : 0;
+  return boundary
+    ? calendarBoundaryAtFraction(axisStart, axisEnd, intervalMs, fraction)
+    : calendarStartAtFraction(axisStart, axisEnd, intervalMs, fraction);
+}
+async function moveBooking(
+  id: string,
+  startMs: number,
+  preferredLaneId: number,
+  expectedStartMs: number,
+) {
+  const idempotencyKey = randomIdempotencyKey();
+  const body: Record<string, unknown> = {
+    idempotencyKey,
+    startMs,
+    preferredLaneId,
+    expectedStartMs,
+  };
+  try {
+    await api(`/api/staff/bookings/${id}/reschedule`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  } catch (error) {
+    const details = error as Error & {
+      requiresPriceConfirmation?: boolean;
+      oldQuoteClp?: number;
+      quoteClp?: number;
+    };
+    if (!details.requiresPriceConfirmation) throw error;
+    const accepted = confirm(
+      `El nuevo horario cambia el total de ${money(details.oldQuoteClp ?? 0)} a ${money(details.quoteClp ?? 0)}. ¿Confirmaste con el cliente y aceptas actualizar el valor?`,
+    );
+    if (!accepted) throw new Error("Cambio cancelado; la reserva conserva su horario actual.");
+    await api(`/api/staff/bookings/${id}/reschedule`, {
+      method: "POST",
+      body: JSON.stringify({ ...body, acceptedQuoteClp: details.quoteClp }),
+    });
+  }
+  await loadStaff(state.board.date);
+  say("Reserva movida y fijada para protegerla de la reorganización automática.", "success");
+  render();
 }
 function notice() {
   return state.message
@@ -207,7 +292,16 @@ function renderBook() {
     .join("");
   const content = `<section class="booking-layout"><div class="booking-intro"><div class="booking-intro-copy"><span class="eyebrow">✳ RESERVAS EN ESPACIO OX</span><h1>Arma el plan.<br><em>La pista te espera.</em></h1><p>Encuentra el horario perfecto para tu grupo. Nosotros preparamos las pistas.</p><div class="hero-facts"><span><b>12</b> pistas</span><span><b>6</b> jugadores por pista</span><span><b>${state.config?.preparationMinutes ?? 10} min</b> entre grupos</span></div></div><div class="hero-visual" aria-hidden="true"><span class="glow"></span><div class="pin pin-a"></div><div class="pin pin-b"></div><div class="pin pin-c"></div><div class="ball"><i></i><i></i><i></i></div><div class="art-caption"><span>● ESPACIO OX</span><b>El plan perfecto<br>para compartir</b></div></div></div>
   <section class="booking-card"><div class="booking-heading"><div><span class="eyebrow">01 · PLANIFICA TU VISITA</span><h2>¿Cuándo jugamos?</h2><p>Elige el día y cuéntanos cómo viene tu grupo.</p></div><div class="steps" aria-label="Pasos de la reserva"><b>1</b> Busca <i></i><b>2</b> Elige <i></i><b>3</b> Confirma</div></div>
-  <form id="search" class="search-grid"><div class="date-picker-block"><div class="date-picker-heading"><span>Elige un día <small>${monthYear(state.date)}</small></span><label class="date-picker">＋ Otra fecha<input name="date" type="date" min="${today}" max="${maxDate}" value="${esc(state.date)}" required aria-label="Otra fecha"></label></div><div class="date-strip" role="group" aria-label="Próximos días"><button type="button" class="date-week-nav" data-action="date-week" data-direction="previous" aria-label="Ver semana anterior" ${windowStart <= today ? "disabled" : ""}>‹</button>${dateButtons}<button type="button" class="date-week-nav" data-action="date-week" data-direction="next" aria-label="Ver semana siguiente" ${windowStart >= lastDateWindowStart ? "disabled" : ""}>›</button></div></div><label>Hora preferida<input name="time" type="time" step="${(state.config?.startIntervalMinutes ?? 10) * 60}" value="${esc(state.time)}" required></label><label>Jugadores<div class="player-stepper"><button type="button" data-action="players-adjust" data-step="-1" aria-label="Quitar un jugador" ${state.players <= 1 ? "disabled" : ""}>−</button><input name="players" type="number" min="1" max="72" value="${state.players}" required aria-label="Cantidad de jugadores"><button type="button" data-action="players-adjust" data-step="1" aria-label="Agregar un jugador" ${state.players >= 72 ? "disabled" : ""}>＋</button></div></label><label>Tiempo de juego<select name="duration">${[60, 120, 180, 240].map((n) => `<option value="${n}" ${state.duration === n ? "selected" : ""}>${n / 60} ${n === 60 ? "hora" : "horas"}</option>`).join("")}</select></label><button class="button primary search-button" ${state.loading ? "disabled" : ""}>${state.loading ? "Buscando horarios…" : "Buscar horarios →"}</button>${state.players > 12 ? `<label class="check-row"><input name="separated" type="checkbox" ${state.separated ? "checked" : ""}> Acepto pistas separadas si no hay un grupo contiguo.</label>` : ""}</form>
+  <form id="search" class="search-grid"><div class="date-picker-block"><div class="date-picker-heading"><span>Elige un día <small>${monthYear(state.date)}</small></span><label class="date-picker">＋ Otra fecha<input name="date" type="date" min="${today}" max="${maxDate}" value="${esc(state.date)}" required aria-label="Otra fecha"></label></div><div class="date-strip" role="group" aria-label="Próximos días"><button type="button" class="date-week-nav" data-action="date-week" data-direction="previous" aria-label="Ver semana anterior" ${windowStart <= today ? "disabled" : ""}>‹</button>${dateButtons}<button type="button" class="date-week-nav" data-action="date-week" data-direction="next" aria-label="Ver semana siguiente" ${windowStart >= lastDateWindowStart ? "disabled" : ""}>›</button></div></div><label>Hora preferida<input name="time" type="time" step="${(state.config?.startIntervalMinutes ?? 10) * 60}" value="${esc(state.time)}" required></label><label>Jugadores<div class="player-stepper"><button type="button" data-action="players-adjust" data-step="-1" aria-label="Quitar un jugador" ${state.players <= 1 ? "disabled" : ""}>−</button><input name="players" type="number" min="1" max="72" value="${state.players}" required aria-label="Cantidad de jugadores"><button type="button" data-action="players-adjust" data-step="1" aria-label="Agregar un jugador" ${state.players >= 72 ? "disabled" : ""}>＋</button></div></label><label>Tiempo de juego<select name="duration">${durationOptions(
+    state.config?.startIntervalMinutes ?? 10,
+  )
+    .map(
+      (n) =>
+        `<option value="${n}" ${state.duration === n ? "selected" : ""}>${durationLabel(n)}</option>`,
+    )
+    .join(
+      "",
+    )}</select></label><button class="button primary search-button" ${state.loading ? "disabled" : ""}>${state.loading ? "Buscando horarios…" : "Buscar horarios →"}</button>${state.players > 12 ? `<label class="check-row"><input name="separated" type="checkbox" ${state.separated ? "checked" : ""}> Acepto pistas separadas si no hay un grupo contiguo.</label>` : ""}</form>
   ${state.options.length ? renderOptions() : ""}${state.availabilitySearched && !state.options.length && !state.selected && !state.result ? renderEmptyAvailability() : ""}${state.selected ? renderRequestForm() : ""}${state.result ? renderResult() : ""}</section></section>
   <section class="how"><div><span class="eyebrow">ASÍ DE FÁCIL</span><h2>Menos coordinar.<br><em>Más jugar.</em></h2></div><div class="how-cards"><article><b>01</b><span>⌕</span><h3>Busca</h3><p>Indica el día, hora ideal y tamaño del grupo.</p></article><article><b>02</b><span>◷</span><h3>Compara</h3><p>Revisa horarios y precios antes de decidir.</p></article><article><b>03</b><span>↗</span><h3>Confirma</h3><p>Verifica tu correo y sigue tu reserva con un enlace privado.</p></article></div></section><section class="venue-strip"><span>⌖</span><b>Nos encontramos en Santiago</b><small>La disponibilidad se muestra en hora local de Chile.</small><span class="venue-help">¿Dudas? Nuestro equipo puede ayudarte en el local.</span></section>`;
   shell(content);
@@ -222,7 +316,7 @@ function renderOptions() {
   const repeatedTimes = new Set(
     [...counts].filter(([, count]) => count > 1).map(([startTime]) => startTime),
   );
-  return `<section class="options"><div class="panel-title"><div><span class="eyebrow">${state.options.length} ${state.options.length === 1 ? "OPCIÓN ENCONTRADA" : "OPCIONES ENCONTRADAS"}</span><h3>${esc(dateText(state.date))}</h3><p>Cerca de las ${esc(state.time)}. Recomendado conserva más horarios disponibles para otros grupos.</p></div><span class="pill">${state.players} personas · ${state.duration / 60} h</span></div>${nearest
+  return `<section class="options"><div class="panel-title"><div><span class="eyebrow">${state.options.length} ${state.options.length === 1 ? "OPCIÓN ENCONTRADA" : "OPCIONES ENCONTRADAS"}</span><h3>${esc(dateText(state.date))}</h3><p>Cerca de las ${esc(state.time)}. Recomendado conserva más horarios disponibles para otros grupos.</p></div><span class="pill">${state.players} personas · ${durationLabel(state.duration)}</span></div>${nearest
     .map((o: Option) => {
       const chosen = state.selected?.startMs === o.startMs;
       const tag =
@@ -336,6 +430,7 @@ function renderBoard() {
     12,
     Math.min(300, state.calendarZoomPx ?? state.board.calendarHourWidthPx ?? 60),
   );
+  const slotMinutes = state.config?.startIntervalMinutes ?? 10;
   const tickMinutes = zoomPx >= 84 ? 60 : zoomPx >= 48 ? 120 : zoomPx >= 24 ? 180 : 360;
   const currentRangeLabel =
     calendarRanges.find((range) => range.value === state.calendarRange)?.label ?? "Total";
@@ -372,7 +467,10 @@ function renderBoard() {
           const width = Math.max(0, ((end - start) / spanMinutes) * 100);
           const localStart = time(booking.start);
           const offset = repeatedStarts.has(localStart) ? ` ${booking.utcOffset}` : "";
-          return `<button class="event booking-event ${booking.status === "confirmed" ? "booked" : "held"}" style="left:${left}%;width:${width}%" data-action="booking" data-id="${esc(booking.id)}" data-status="${booking.status === "confirmed" ? "confirmed" : "held"}" data-search="${esc(`${booking.customerName} ${booking.code} ${booking.customerPhone ?? ""}`.toLocaleLowerCase("es-CL"))}" title="${esc(booking.customerName)} · ${localStart}${offset}"><b>${esc(booking.customerName)}</b><small>${localStart}${offset} · ${booking.players} pers.</small></button>`;
+          const canMove =
+            booking.status === "confirmed" && !booking.checkedInAt && !booking.effectiveStart;
+          const canExtend = booking.status === "confirmed" && Boolean(booking.checkedInAt);
+          return `<button class="event booking-event ${booking.status === "confirmed" ? "booked" : "held"} ${booking.manualLaneLock ? "fixed-booking" : ""}" style="left:${left}%;width:${width}%" data-action="booking" data-id="${esc(booking.id)}" data-lane-id="${lane.id}" data-status="${booking.status === "confirmed" ? "confirmed" : "held"}" data-search="${esc(`${booking.customerName} ${booking.code} ${booking.customerPhone ?? ""}`.toLocaleLowerCase("es-CL"))}" draggable="${canMove}" title="${esc(booking.customerName)} · ${localStart}${offset}${booking.manualLaneLock ? " · Fijada frente a reorganización automática" : ""}. ${canMove ? "Puedes moverla con el mouse" : canExtend ? "Arrastra el borde derecho para seleccionar una extensión" : "No se puede mover"}"><b>${esc(booking.customerName)}</b><small>${booking.manualLaneLock ? "▣ " : ""}${localStart}${offset} · ${booking.players} pers.</small>${canExtend ? `<span class="booking-resize-handle" aria-hidden="true"></span>` : ""}</button>`;
         })
         .join("");
       const blocks = state.board.blocks
@@ -383,7 +481,7 @@ function renderBoard() {
           return `<span class="event blocked" data-action="blocked-slot" style="left:${(start / spanMinutes) * 100}%;width:${Math.max(0, ((end - start) / spanMinutes) * 100)}%" title="${esc(block.reason)}">Bloqueo</span>`;
         })
         .join("");
-      return `<div class="track" data-action="calendar-slot" data-date="${esc(state.board.date)}" data-axis-start="${state.board.axisStartMs}" data-axis-end="${state.board.axisEndMs}" style="--tick:${(zoomPx * tickMinutes) / 60}px" role="group" tabindex="0" aria-label="Pista ${lane.id}: selecciona un horario libre para iniciar una reserva">${blocks}${events}</div>`;
+      return `<div class="track" data-action="calendar-slot" data-lane-id="${lane.id}" data-date="${esc(state.board.date)}" data-axis-start="${state.board.axisStartMs}" data-axis-end="${state.board.axisEndMs}" style="--tick:${(zoomPx * tickMinutes) / 60}px;--slot-width:${(zoomPx * slotMinutes) / 60}px" role="group" tabindex="0" aria-label="Pista ${lane.id}: haz clic o arrastra sobre un horario libre para crear una reserva">${blocks}${events}</div>`;
     })
     .join("");
   const ticks = tickOffsets
@@ -393,7 +491,7 @@ function renderBoard() {
     )
     .join("");
   const boardFilters = `<section class="board-filterbar" aria-label="Buscar reservas del día"><label class="board-search"><span>Encontrar reserva</span><input id="board-booking-search" type="search" value="${esc(state.boardSearch)}" placeholder="Nombre, código o teléfono" autocomplete="off"></label><label class="board-status-filter"><span>Estado</span><select id="board-booking-status"><option value="all" ${state.boardBookingStatus === "all" ? "selected" : ""}>Todos</option><option value="confirmed" ${state.boardBookingStatus === "confirmed" ? "selected" : ""}>Confirmadas</option><option value="held" ${state.boardBookingStatus === "held" ? "selected" : ""}>Retenidas</option></select></label><p id="board-filter-count" aria-live="polite"></p><button class="button ghost small" data-action="board-clear-filters" ${!state.boardSearch && state.boardBookingStatus === "all" ? "disabled" : ""}>Limpiar filtros</button></section>`;
-  return `<div class="metrics-wrap">${metrics}</div>${boardFilters}<section class="board-card"><div class="panel-title"><div><h2>Ocupación de pistas</h2><p>${esc(dateText(state.board.date))} · intervalos reales en hora de Santiago</p></div><div class="board-tools"><div class="legend"><span>● Confirmada</span><span>● Retenida</span><span>● Bloqueada</span></div><button class="button outline small" data-action="reoptimize">Reorganizar asignaciones flexibles</button></div></div><div class="calendar-hint"><b>＋ Reserva desde el calendario</b><span>Haz clic en una franja de atención libre para iniciar una reserva con día y hora precargados. Confirmaremos disponibilidad al guardarla.</span></div><div class="calendar-table" style="--calendar-width:${timelineWidth}px"><div class="calendar-sticky-header"><div class="calendar-controls">${dateNavigation}<div class="calendar-zoom" role="group" aria-label="Navegación y zoom horizontal del calendario"><button class="button outline small" type="button" data-action="calendar-scroll" data-direction="left" aria-label="Mostrar horas anteriores">‹</button><button class="button outline small" type="button" data-action="calendar-range-step" data-direction="previous" aria-label="Rango visible anterior">−</button><button type="button" class="calendar-range-button" data-action="calendar-range-cycle" aria-pressed="true" aria-label="Rango visible: ${esc(currentRangeLabel)}. Clic para cambiar" title="Clic para cambiar el rango"><span class="calendar-range-label">${currentRangeLabel}</span><span aria-hidden="true">↻</span></button><button class="button outline small" type="button" data-action="calendar-range-step" data-direction="next" aria-label="Rango visible siguiente">＋</button><button class="button outline small" type="button" data-action="calendar-scroll" data-direction="right" aria-label="Mostrar horas siguientes">›</button></div></div><div class="calendar-axis-spacer" aria-hidden="true"></div><div class="calendar-axis-viewport"><div class="hours"><div class="hour-track">${ticks}</div></div></div></div><div class="calendar-grid"><div class="lane-label-column">${laneLabels}</div><div class="board-scroll">${rows}</div></div></div><small class="board-note">La reorganización fija fecha, hora, duración y pistas contratadas; excluye reservas en preparación, check-in, curso o bloqueo operacional.</small></section><section class="plain-card maintenance-panel"><div class="panel-title"><div><h2>Mantenimiento y bloqueos</h2><p>Un bloqueo nuevo no puede desplazar una reserva ya comprometida.</p></div></div><form id="block-form" class="block-form"><label>Pista<select name="laneId"><option value="">Todas las pistas</option>${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}">Pista ${i + 1}</option>`).join("")}</select></label><label>Desde · hora de Santiago<input name="start" type="datetime-local" step="600" value="${esc(state.board.date)}T18:00" required></label><label>Hasta · hora de Santiago<input name="end" type="datetime-local" step="600" value="${esc(state.board.date)}T19:00" required></label><label>Motivo<input name="reason" maxlength="250" required placeholder="Inspección de pista"></label><button class="button outline">＋ Crear bloqueo</button></form>${state.board.blocks.length ? `<div class="block-list">${state.board.blocks.map((block: any) => `<div class="rate-row"><span><b>${block.laneId ? `Pista ${block.laneId}` : "Todas las pistas"} · ${time(block.start)}–${time(block.end)}</b><small>${esc(block.reason)}</small></span><button data-action="release-block" data-id="${esc(block.id)}">Liberar</button></div>`).join("")}</div>` : ""}</section>`;
+  return `<div class="metrics-wrap">${metrics}</div>${boardFilters}<section class="board-card"><div class="panel-title"><div><h2>Ocupación de pistas</h2><p>${esc(dateText(state.board.date))} · intervalos reales en hora de Santiago</p></div><div class="board-tools"><div class="legend"><span>● Confirmada</span><span>● Retenida</span><span>● Bloqueada</span></div><button class="button outline small" data-action="reoptimize">Reorganizar asignaciones flexibles</button></div></div><div class="calendar-hint"><b>＋ Reserva desde el calendario</b><span>Bloques de ${slotMinutes} min · arrastra sobre espacios libres para definir la duración; arrastra una reserva para moverla. Los cambios se revalidan y las asignaciones movidas manualmente quedan fijadas.</span></div><div class="calendar-table" style="--calendar-width:${timelineWidth}px"><div class="calendar-sticky-header"><div class="calendar-controls">${dateNavigation}<div class="calendar-zoom" role="group" aria-label="Navegación y zoom horizontal del calendario"><button class="button outline small" type="button" data-action="calendar-scroll" data-direction="left" aria-label="Mostrar horas anteriores">‹</button><button class="button outline small" type="button" data-action="calendar-range-step" data-direction="previous" aria-label="Rango visible anterior">−</button><button type="button" class="calendar-range-button" data-action="calendar-range-cycle" aria-pressed="true" aria-label="Rango visible: ${esc(currentRangeLabel)}. Clic para cambiar" title="Clic para cambiar el rango"><span class="calendar-range-label">${currentRangeLabel}</span><span aria-hidden="true">↻</span></button><button class="button outline small" type="button" data-action="calendar-range-step" data-direction="next" aria-label="Rango visible siguiente">＋</button><button class="button outline small" type="button" data-action="calendar-scroll" data-direction="right" aria-label="Mostrar horas siguientes">›</button></div></div><div class="calendar-axis-spacer" aria-hidden="true"></div><div class="calendar-axis-viewport"><div class="hours"><div class="hour-track">${ticks}</div></div></div></div><div class="calendar-grid"><div class="lane-label-column">${laneLabels}</div><div class="board-scroll">${rows}</div></div></div><small class="board-note">La reorganización solo cambia las pistas; respeta el bloqueo manual, el horario y las condiciones confirmadas.</small></section><section class="plain-card maintenance-panel"><div class="panel-title"><div><h2>Mantenimiento y bloqueos</h2><p>Un bloqueo nuevo no puede desplazar una reserva ya comprometida.</p></div></div><form id="block-form" class="block-form"><label>Pista<select name="laneId"><option value="">Todas las pistas</option>${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}">Pista ${i + 1}</option>`).join("")}</select></label><label>Desde · hora de Santiago<input name="start" type="datetime-local" step="${(state.config?.startIntervalMinutes ?? 10) * 60}" value="${esc(state.board.date)}T18:00" required></label><label>Hasta · hora de Santiago<input name="end" type="datetime-local" step="${(state.config?.startIntervalMinutes ?? 10) * 60}" value="${esc(state.board.date)}T19:00" required></label><label>Motivo<input name="reason" maxlength="250" required placeholder="Inspección de pista"></label><button class="button outline">＋ Crear bloqueo</button></form>${state.board.blocks.length ? `<div class="block-list">${state.board.blocks.map((block: any) => `<div class="rate-row"><span><b>${block.laneId ? `Pista ${block.laneId}` : "Todas las pistas"} · ${time(block.start)}–${time(block.end)}</b><small>${esc(block.reason)}</small></span><button data-action="release-block" data-id="${esc(block.id)}">Liberar</button></div>`).join("")}</div>` : ""}</section>`;
 }
 function renderRequests() {
   return `<section class="plain-card"><div class="panel-title"><div><h2>En espera de decisión</h2><p>La solicitud de aprobación conserva las pistas hasta que se resuelva.</p></div><span class="pill">${state.requests.length} pendientes</span></div>${state.requests.length ? state.requests.map((r: any) => `<article class="staff-request"><span class="avatar">${esc(r.name.slice(0, 1))}</span><div><b>${esc(r.name)} <small>${esc(r.code)}</small></b><p>${esc(r.email)} · ${r.players} jugadores · ${r.laneCount} pistas ${r.grouped ? "juntas" : "separadas"}</p><small>${esc(dateText(localDate(r.start)))} · ${time(r.start)}–${time(r.end)}</small><p class="request-status">${r.status === "pending_price_acceptance" ? `Precio por aceptar: ${money(r.updatedQuoteClp)}` : `Retenida · ${money(r.quoteClp)}`}</p></div><div class="actions">${r.status === "pending_approval" ? `<button class="button primary small" data-action="approve" data-id="${esc(r.id)}">Aprobar</button>` : `<span class="tag amber">Precio pendiente</span>`}<button class="button ghost small" data-action="reject" data-id="${esc(r.id)}">Rechazar</button></div></article>`).join("") : `<div class="empty"><b>✓</b><h3>Todo al día</h3><p>No hay solicitudes pendientes de revisión.</p></div>`}</section>`;
@@ -401,20 +499,42 @@ function renderRequests() {
 function renderNewBooking() {
   state.manualKey ??= randomIdempotencyKey();
   const startAt = state.manualStartAt ?? `${state.board?.date ?? state.date}T18:00`;
-  return `<section class="new-grid"><div class="plain-card"><span class="eyebrow">RESERVA INTERNA</span><h2>Atención rápida,<br><em>espacio asegurado.</em></h2><p>Teléfono requiere nombre y teléfono. Una reserva presencial futura requiere nombre y un medio de contacto. Inmediata: solo responsable.</p><div class="callout"><b>${state.config?.demoMode ? "Precio de demostración" : state.config?.rateConfigured ? "Tarifa vigente" : "Tarifa pendiente"}</b><span>${state.config?.demoMode ? "No usar para cobro real." : state.config?.rateConfigured ? "El precio se calculará en el momento de guardar." : "Configura una tarifa antes de crear reservas."}</span></div></div><div class="plain-card"><h3>Datos de la reserva</h3><form id="manual"><input type="hidden" name="startMs" value="${state.manualStartMs ?? ""}"><label>Canal<select name="channel"><option value="walk_in">Presencial inmediata</option><option value="phone">Teléfono</option><option value="counter_future">Presencial futura</option></select></label><div class="two-fields"><label>Nombre responsable<input name="name" required maxlength="120"></label><label>Teléfono<input name="phone" type="tel" maxlength="30"></label><label>Correo<input name="email" type="email" maxlength="254"></label><label>Jugadores<input name="players" type="number" min="1" max="72" value="4" required></label><label>Inicio · hora de Santiago<input name="startAt" type="datetime-local" step="600" value="${esc(startAt)}" required></label><label>Duración<select name="duration">${[60, 120, 180, 240].map((n) => `<option value="${n}">${n / 60} ${n === 60 ? "hora" : "horas"}</option>`).join("")}</select></label><label>Pistas contratadas<select name="laneCount"><option value="">Mínimas necesarias</option>${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join("")}</select></label><label class="check-row"><input name="separate" type="checkbox"> Cliente acepta pistas separadas</label></div><button class="button primary">Crear y retener pistas →</button></form></div></section>`;
+  return `<section class="new-grid"><div class="plain-card"><span class="eyebrow">RESERVA INTERNA</span><h2>Atención rápida,<br><em>espacio asegurado.</em></h2><p>Teléfono requiere nombre y teléfono. Una reserva presencial futura requiere nombre y un medio de contacto. Inmediata: solo responsable.</p><div class="callout"><b>${state.config?.demoMode ? "Precio de demostración" : state.config?.rateConfigured ? "Tarifa vigente" : "Tarifa pendiente"}</b><span>${state.config?.demoMode ? "No usar para cobro real." : state.config?.rateConfigured ? "El precio se calculará en el momento de guardar." : "Configura una tarifa antes de crear reservas."}</span></div></div><div class="plain-card"><h3>Datos de la reserva</h3><form id="manual"><input type="hidden" name="startMs" value="${state.manualStartMs ?? ""}"><label>Canal<select name="channel"><option value="walk_in">Presencial inmediata</option><option value="phone">Teléfono</option><option value="counter_future">Presencial futura</option></select></label><div class="two-fields"><label>Nombre responsable<input name="name" required maxlength="120"></label><label>Teléfono<input name="phone" type="tel" maxlength="30"></label><label>Correo<input name="email" type="email" maxlength="254"></label><label>Jugadores<input name="players" type="number" min="1" max="72" value="4" required></label><label>Inicio · hora de Santiago<input name="startAt" type="datetime-local" step="${(state.config?.startIntervalMinutes ?? 10) * 60}" value="${esc(startAt)}" required></label><label>Duración<select name="duration">${durationOptions(
+    state.config?.startIntervalMinutes ?? 10,
+  )
+    .map(
+      (n) =>
+        `<option value="${n}" ${n === (state.manualDurationMinutes ?? 60) ? "selected" : ""}>${durationLabel(n)}</option>`,
+    )
+    .join(
+      "",
+    )}</select></label><label>Pistas contratadas<select name="laneCount"><option value="">Mínimas necesarias</option>${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join("")}</select></label><label class="check-row"><input name="separate" type="checkbox"> Cliente acepta pistas separadas</label></div><button class="button primary">Crear y retener pistas →</button></form></div></section>`;
 }
 function renderAdmin() {
   return renderAdminView(state, days, esc, money);
 }
 function modalHtml() {
   const b = state.modal.booking;
+  const canReschedule =
+    b.status === "confirmed" && !b.checkedInAt && !b.effectiveStart && b.start > Date.now();
   const payment = `<form id="payment"><input type="hidden" name="idempotencyKey" value="${esc(state.modal.idempotencyKey)}"><h2 id="modal-title">Registrar movimiento</h2><p>${esc(b.code)} · saldo ${money(b.balanceClp ?? b.quoteClp)}</p><label>Importe CLP<input name="amount" type="number" min="1" required></label><label>Medio<select name="method"><option value="cash">Efectivo</option><option value="transfer">Transferencia</option><option value="external_terminal">Terminal externo</option>${state.user?.role === "admin" ? `<option value="refund">Devolución externa</option>` : ""}</select></label><label>Estado<select name="status"><option value="reported">Informado · verificar después</option><option value="verified">Acreditado externamente</option>${state.user?.role === "admin" ? `<option value="refund_recorded">Devolución externa completada</option>` : ""}</select></label><label>Referencia<input name="reference"></label>${state.user?.role === "admin" ? `<small class="privacy">Una devolución registra una operación ya realizada fuera del sistema; no mueve dinero.</small>` : ""}<button class="button primary">Guardar movimiento</button></form>`;
-  const extend = `<form id="extend"><input type="hidden" name="idempotencyKey" value="${esc(state.modal.idempotencyKey)}"><h2 id="modal-title">Extender reserva</h2><p>${esc(b.code)} · ${time(b.end)} término previsto</p><label>Tiempo extra<select name="minutes"><option value="15">15 minutos</option><option value="30">30 minutos</option><option value="60">60 minutos</option></select></label><label class="check-row"><input name="accepted" type="checkbox" required> Cliente acepta el importe y la extensión</label><button class="button primary">Autorizar extensión</button></form>`;
+  const extend = `<form id="extend"><input type="hidden" name="idempotencyKey" value="${esc(state.modal.idempotencyKey)}"><h2 id="modal-title">Extender reserva</h2><p>${esc(b.code)} · ${time(b.end)} término previsto</p><label>Tiempo extra<select name="minutes">${(state.config?.extensionDurations ?? [15, 30, 60]).map((minutes: number) => `<option value="${minutes}" ${minutes === state.pendingExtensionMinutes ? "selected" : ""}>${minutes} minutos</option>`).join("")}</select></label><label class="check-row"><input name="accepted" type="checkbox" required> Cliente acepta el importe y la extensión</label><button class="button primary">Autorizar extensión</button></form>`;
+  const reschedule = `<form id="reschedule"><input type="hidden" name="idempotencyKey" value="${esc(state.modal.idempotencyKey)}"><input type="hidden" name="expectedStartMs" value="${b.start}"><h2 id="modal-title">Mover reserva</h2><p>${esc(b.code)} · se conserva la duración de ${durationLabel((b.end - b.start) / 60_000)}.</p><label>Nuevo inicio · hora de Santiago<input name="startAt" type="datetime-local" step="${(state.config?.startIntervalMinutes ?? 10) * 60}" value="${esc(localDateTime(b.start))}" required></label><label>Pista de referencia<select name="preferredLaneId">${Array.from(
+    { length: 12 },
+    (_, index) => index + 1,
+  )
+    .map(
+      (lane) =>
+        `<option value="${lane}" ${lane === b.lanes[0] ? "selected" : ""}>Pista ${lane}</option>`,
+    )
+    .join(
+      "",
+    )}</select></label><small>El calendario validará disponibilidad y precio. La nueva asignación quedará fijada contra reorganizaciones automáticas.</small><button class="button primary">Validar y mover</button></form>`;
   const absent = `<div><span class="eyebrow">RESOLUCIÓN OPERATIVA</span><h2 id="modal-title">¿Cómo resolver la llegada?</h2><p>Ya pasó la tolerancia inicial. Elige si mantienes el compromiso o liberas las pistas.</p><button class="button outline" data-action="absence" data-id="${esc(b.id)}" data-resolution="keep">Mantener reserva</button><button class="button primary" data-action="absence" data-id="${esc(b.id)}" data-resolution="release">Declarar ausencia y liberar</button></div>`;
-  const actions = `${!b.checkedInAt && b.status === "confirmed" ? `<button class="button outline" data-action="checkin" data-id="${esc(b.id)}">Registrar check-in</button>` : ""}${b.checkedInAt && b.status === "confirmed" ? `<button class="button outline" data-action="finish" data-id="${esc(b.id)}">Registrar término</button><button class="button outline" data-action="extend-modal" data-id="${esc(b.id)}">Extender</button>` : ""}${!b.checkedInAt && b.status === "confirmed" && Date.now() >= b.start + (state.config?.lateArrivalToleranceMinutes ?? 10) * 60000 ? `<button class="button outline" data-action="absence-modal" data-id="${esc(b.id)}">Resolver ausencia</button>` : ""}${b.status === "confirmed" ? `<button class="button ghost" data-action="cancel-booking" data-id="${esc(b.id)}">Cancelar reserva</button>` : ""}<button class="button outline" data-action="payment-modal" data-id="${esc(b.id)}">Registrar pago</button>`;
+  const actions = `${canReschedule ? `<button class="button outline" data-action="reschedule-modal" data-id="${esc(b.id)}">Mover horario</button>` : ""}${canReschedule ? `<button class="button outline" data-action="toggle-booking-lock" data-id="${esc(b.id)}" data-locked="${!b.manualLaneLock}">${b.manualLaneLock ? "Permitir reorganización automática" : "Fijar pistas"}</button>` : ""}${!b.checkedInAt && b.status === "confirmed" ? `<button class="button outline" data-action="checkin" data-id="${esc(b.id)}">Registrar check-in</button>` : ""}${b.checkedInAt && b.status === "confirmed" ? `<button class="button outline" data-action="finish" data-id="${esc(b.id)}">Registrar término</button><button class="button outline" data-action="extend-modal" data-id="${esc(b.id)}">Extender</button>` : ""}${!b.checkedInAt && b.status === "confirmed" && Date.now() >= b.start + (state.config?.lateArrivalToleranceMinutes ?? 10) * 60000 ? `<button class="button outline" data-action="absence-modal" data-id="${esc(b.id)}">Resolver ausencia</button>` : ""}${b.status === "confirmed" ? `<button class="button ghost" data-action="cancel-booking" data-id="${esc(b.id)}">Cancelar reserva</button>` : ""}<button class="button outline" data-action="payment-modal" data-id="${esc(b.id)}">Registrar pago</button>`;
   const paymentHistory = `<div class="payment-history"><h3>Pagos y movimientos</h3>${(b.payments ?? []).length ? b.payments.map((payment: any) => `<div class="rate-row"><span><b>${money(payment.amount_clp)} · ${esc(payment.method)}</b><small>${esc(payment.status)}${payment.reference ? ` · ${esc(payment.reference)}` : ""} · ${new Date(payment.created_at).toLocaleString("es-CL")}</small></span>${payment.status === "reported" ? `<button class="button outline small" data-action="verify-payment" data-id="${esc(payment.id)}">Verificar</button>${state.user?.role === "admin" ? `<button class="button ghost small" data-action="void-payment" data-id="${esc(payment.id)}">Corregir</button>` : ""}` : ""}</div>`).join("") : `<p class="muted">No hay movimientos registrados.</p>`}</div>`;
   const detail = `<div><button data-action="close" class="close" aria-label="Cerrar ficha de reserva">×</button><span class="eyebrow">FICHA DE RESERVA</span><h2 id="modal-title">${esc(b.code)}</h2><b>${esc(b.customerName)}</b><div class="detail-grid"><span>Horario<b>${time(b.start)}${b.ambiguousLocalTime ? ` · ${esc(b.utcOffset)}` : ""}–${time(b.end)}</b></span><span>Estado<b>${esc(b.status)} · ${esc(b.inventoryStatus)}</b></span><span>Grupo<b>${b.players} jugadores</b></span><span>Pistas<b>${(b.lanes ?? []).join(", ")}</b></span><span>Total<b>${money(b.quoteClp)}</b></span><span>Contacto<b>${esc(b.customerPhone || b.customerEmail || "No informado")}</b></span></div>${paymentHistory}${actions}</div>`;
-  return `<div class="modal-shade" data-action="outside"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">${state.modal.kind === "payment" ? payment : state.modal.kind === "extend" ? extend : state.modal.kind === "absence" ? absent : detail}<button class="text-button" data-action="close">Volver</button></div></div>`;
+  return `<div class="modal-shade" data-action="outside"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">${state.modal.kind === "payment" ? payment : state.modal.kind === "extend" ? extend : state.modal.kind === "reschedule" ? reschedule : state.modal.kind === "absence" ? absent : detail}<button class="text-button" data-action="close">Volver</button></div></div>`;
 }
 function render() {
   if (state.view === "book") renderBook();
@@ -869,6 +989,15 @@ app.addEventListener("submit", async (event) => {
       render();
       return;
     }
+    if (form.id === "reschedule") {
+      const id = state.modal.booking.id;
+      const newStartMs = localEpoch(v("startAt"));
+      const expectedStartMs = +v("expectedStartMs");
+      const preferredLaneId = +v("preferredLaneId");
+      state.modal = null;
+      await moveBooking(id, newStartMs, preferredLaneId, expectedStartMs);
+      return;
+    }
   } catch (e) {
     state.loading = false;
     say(errorMessage(e), "error");
@@ -934,6 +1063,158 @@ app.addEventListener("change", (event) => {
       }
     }
   }
+});
+app.addEventListener("pointerdown", (event: PointerEvent) => {
+  if (event.button !== 0 || event.pointerType === "touch") return;
+  const target = event.target as HTMLElement;
+  const resizeHandle = target.closest<HTMLElement>(".booking-resize-handle");
+  if (resizeHandle && state.board) {
+    const bookingElement = resizeHandle.closest<HTMLElement>(".booking-event");
+    const booking = state.board.reservations.find(
+      (item: any) => item.id === bookingElement?.dataset.id,
+    );
+    const track = resizeHandle.closest<HTMLElement>(".track");
+    if (!booking?.checkedInAt || !track) return;
+    state.calendarGesture = {
+      kind: "extend",
+      track,
+      pointerId: event.pointerId,
+      booking,
+      endMs: booking.end,
+    };
+    resizeHandle.setPointerCapture(event.pointerId);
+    event.preventDefault();
+    return;
+  }
+  if (target.closest(".booking-event, .blocked")) return;
+  const track = target.closest<HTMLElement>('.track[data-action="calendar-slot"]');
+  if (!track) return;
+  const startMs = trackTimeAtPointer(track, event.clientX);
+  state.calendarGesture = {
+    kind: "select",
+    track,
+    pointerId: event.pointerId,
+    date: track.dataset.date,
+    startMs,
+    endMs: startMs,
+  };
+  track.setPointerCapture(event.pointerId);
+  event.preventDefault();
+});
+app.addEventListener("pointermove", (event: PointerEvent) => {
+  const gesture = state.calendarGesture;
+  if (!gesture || gesture.pointerId !== event.pointerId) return;
+  gesture.endMs = trackTimeAtPointer(gesture.track, event.clientX, true);
+  const spanMinutes =
+    (Number(gesture.track.dataset.axisEnd) - Number(gesture.track.dataset.axisStart)) / 60_000;
+  const startMs =
+    gesture.kind === "extend" ? gesture.booking.end : Math.min(gesture.startMs, gesture.endMs);
+  const endMs =
+    gesture.kind === "extend" ? gesture.endMs : Math.max(gesture.startMs, gesture.endMs);
+  let preview = gesture.track.querySelector(".calendar-selection") as HTMLElement | null;
+  if (!preview) {
+    preview = document.createElement("span");
+    preview.className = "calendar-selection";
+    gesture.track.append(preview);
+  }
+  const axisStart = Number(gesture.track.dataset.axisStart);
+  preview.style.left = `${((startMs - axisStart) / 60_000 / spanMinutes) * 100}%`;
+  preview.style.width = `${(Math.max(1, (endMs - startMs) / 60_000) / spanMinutes) * 100}%`;
+  preview.textContent =
+    gesture.kind === "extend"
+      ? `+${Math.max(0, (endMs - startMs) / 60_000)} min`
+      : `${time(startMs)}–${time(endMs)}`;
+});
+app.addEventListener("pointerup", (event: PointerEvent) => {
+  const gesture = state.calendarGesture;
+  if (!gesture || gesture.pointerId !== event.pointerId) return;
+  state.calendarGesture = null;
+  gesture.track.querySelector(".calendar-selection")?.remove();
+  const interval = state.config?.startIntervalMinutes ?? 10;
+  if (gesture.kind === "extend") {
+    const addedMinutes =
+      Math.floor((gesture.endMs - gesture.booking.end) / (interval * 60_000)) * interval;
+    const extensionMinutes = Math.min(60, addedMinutes);
+    if (extensionMinutes < interval) return;
+    state.pendingExtensionMinutes = extensionMinutes;
+    state.modal = {
+      kind: "extend",
+      idempotencyKey: randomIdempotencyKey(),
+      booking: gesture.booking,
+    };
+    render();
+    event.preventDefault();
+    return;
+  }
+  const minimumMinutes = Math.ceil(60 / interval) * interval;
+  const maximumMinutes = Math.floor(240 / interval) * interval;
+  const selectedMinutes = Math.abs(gesture.endMs - gesture.startMs) / 60_000;
+  const durationMinutes = Math.min(
+    maximumMinutes,
+    Math.max(minimumMinutes, Math.ceil(selectedMinutes / interval) * interval),
+  );
+  const startMs = Math.min(gesture.startMs, gesture.endMs);
+  openCalendarReservation(startMs, gesture.date, durationMinutes);
+  event.preventDefault();
+});
+app.addEventListener("pointercancel", (event: PointerEvent) => {
+  if (state.calendarGesture?.pointerId !== event.pointerId) return;
+  state.calendarGesture.track.querySelector(".calendar-selection")?.remove();
+  state.calendarGesture = null;
+});
+app.addEventListener("dragstart", (event: DragEvent) => {
+  const source = (event.target as HTMLElement).closest<HTMLButtonElement>(
+    '.booking-event[draggable="true"]',
+  );
+  if (!source) return;
+  state.draggedBookingId = source.dataset.id;
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", source.dataset.id ?? "");
+  }
+  source.classList.add("dragging");
+});
+app.addEventListener("dragover", (event: DragEvent) => {
+  const track = (event.target as HTMLElement).closest<HTMLElement>(".track");
+  if (!track || !state.draggedBookingId) return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+  track.classList.add("drag-target");
+});
+app.addEventListener("dragleave", (event: DragEvent) => {
+  const track = (event.target as HTMLElement).closest<HTMLElement>(".track");
+  if (track && !track.contains(event.relatedTarget as Node | null))
+    track.classList.remove("drag-target");
+});
+app.addEventListener("drop", async (event: DragEvent) => {
+  const track = (event.target as HTMLElement).closest<HTMLElement>(".track");
+  const id = event.dataTransfer?.getData("text/plain") || state.draggedBookingId;
+  if (!track || !id || !state.board) return;
+  event.preventDefault();
+  document
+    .querySelectorAll(".track.drag-target")
+    .forEach((item) => item.classList.remove("drag-target"));
+  state.draggedBookingId = null;
+  const booking = state.board.reservations.find((item: any) => item.id === id);
+  if (!booking) return;
+  const startMs = trackTimeAtPointer(track, event.clientX);
+  const preferredLaneId = Number(track.dataset.laneId);
+  if (startMs === booking.start && booking.lanes.includes(preferredLaneId)) return;
+  try {
+    await moveBooking(id, startMs, preferredLaneId, booking.start);
+  } catch (error) {
+    say(errorMessage(error), "error");
+    render();
+  }
+});
+app.addEventListener("dragend", () => {
+  state.draggedBookingId = null;
+  document
+    .querySelectorAll(".track.drag-target")
+    .forEach((item) => item.classList.remove("drag-target"));
+  document
+    .querySelectorAll(".booking-event.dragging")
+    .forEach((item) => item.classList.remove("dragging"));
 });
 app.addEventListener("click", async (event) => {
   const target = (event.target as HTMLElement).closest<HTMLElement>("[data-action]");
@@ -1024,22 +1305,7 @@ app.addEventListener("click", async (event) => {
           ? 0.5
           : Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width));
       const startMs = calendarStartAtFraction(start, end, intervalMs, fraction);
-      const date = target.dataset.date!;
-      if (!isWithinOperatingHours(startMs, state.board.operatingHours)) {
-        say("Ese intervalo está fuera del horario de atención.", "info");
-        render();
-        return;
-      }
-      state.manualStartAt = localDateTime(startMs);
-      state.manualStartMs = startMs;
-      state.date = date;
-      state.page = "new";
-      say(
-        `Inicio precargado: ${dateText(state.date)} a las ${time(startMs)}. La disponibilidad se validará al guardar.`,
-        "info",
-      );
-      render();
-      document.querySelector<HTMLInputElement>('#manual [name="name"]')?.focus();
+      openCalendarReservation(startMs, target.dataset.date!, 60);
       return;
     }
     if (action === "blocked-slot") {
@@ -1156,6 +1422,7 @@ app.addEventListener("click", async (event) => {
         "success",
       );
       render();
+      return;
     }
     if (action === "manage-send-code") {
       const form = document.querySelector<HTMLFormElement>("#manage-renew")!;
@@ -1236,6 +1503,29 @@ app.addEventListener("click", async (event) => {
       };
       render();
     }
+    if (action === "reschedule-modal") {
+      const booking = state.board.reservations.find((item: any) => item.id === id);
+      if (!booking) throw new Error("No encontramos esa reserva en el calendario.");
+      state.modal = { kind: "reschedule", idempotencyKey: randomIdempotencyKey(), booking };
+      render();
+    }
+    if (action === "toggle-booking-lock") {
+      const locked = target.dataset.locked === "true";
+      await api(`/api/staff/bookings/${id}/lock`, {
+        method: "POST",
+        body: JSON.stringify({ locked }),
+      });
+      await loadStaff(state.board.date);
+      state.modal.booking = state.board.reservations.find((item: any) => item.id === id);
+      say(
+        locked
+          ? "Reserva fijada; la reorganización automática respetará sus pistas."
+          : "Reserva flexible; la reorganización automática podrá redistribuir sus pistas.",
+        "success",
+      );
+      render();
+      return;
+    }
     if (action === "reoptimize") {
       if (
         !confirm(
@@ -1259,7 +1549,9 @@ app.addEventListener("click", async (event) => {
         idempotencyKey: randomIdempotencyKey(),
         booking,
       };
+      state.pendingExtensionMinutes = null;
       render();
+      return;
     }
     if (action === "absence-modal") {
       state.modal = {

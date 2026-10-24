@@ -47,7 +47,19 @@ if (!tokenSecret || Buffer.byteLength(tokenSecret) < 32)
 const sessionHours = 12;
 const manageHours = 24;
 const rateLimits = new Map();
-const extensionDurations = [15, 30, 60];
+const requestedPlaywrightLoginLimit = Number(process.env.PLAYWRIGHT_LOGIN_ATTEMPT_LIMIT);
+const loginAttemptLimit =
+  process.env.NODE_ENV === "development" &&
+  process.env.MVP_MODE === "demo" &&
+  Number.isInteger(requestedPlaywrightLoginLimit)
+    ? Math.max(8, Math.min(100, requestedPlaywrightLoginLimit))
+    : 8;
+const supportedScheduleIntervals = [5, 10, 12, 15, 20, 30, 60];
+const extensionDurationsFor = (intervalMinutes) =>
+  Array.from(
+    { length: Math.floor(60 / intervalMinutes) },
+    (_, index) => (index + 1) * intervalMinutes,
+  );
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -81,6 +93,10 @@ function requireText(value, field, max = 120) {
   if (typeof value !== "string" || value.trim().length === 0 || value.trim().length > max)
     throw new HttpError(400, `${field} es obligatorio.`);
   return value.trim();
+}
+function alignedToScheduleStep(instant, intervalMinutes) {
+  const [hour, minute] = formatLocalTime(instant).split(":").map(Number);
+  return (hour * 60 + minute) % intervalMinutes === 0;
 }
 function requireEmail(value) {
   const email = requireText(value, "Correo", 254).toLowerCase();
@@ -202,6 +218,7 @@ function reservationPublic(row) {
     checkedInAt: row.checked_in_at,
     effectiveStart: row.effective_start_ms,
     effectiveEnd: row.effective_end_ms,
+    manualLaneLock: Boolean(row.manual_lane_lock),
   };
 }
 function dateLimitOk(date) {
@@ -238,9 +255,12 @@ function getCandidate(startAt, data, channel = "web") {
   if (
     !Number.isSafeInteger(Number(data.durationMinutes)) ||
     Number(data.durationMinutes) < 60 ||
-    Number(data.durationMinutes) % 60 !== 0
+    Number(data.durationMinutes) % settings.startIntervalMinutes !== 0
   )
-    throw new HttpError(400, "La duración inicial debe ser una o más horas completas.");
+    throw new HttpError(
+      400,
+      `La duración debe ser de al menos 60 minutos y usar bloques de ${settings.startIntervalMinutes} minutos.`,
+    );
   if (!Number.isInteger(Number(data.laneCount ?? minimumLanes(Number(data.players)))))
     throw new HttpError(400, "Cantidad de pistas inválida.");
   if (
@@ -251,10 +271,10 @@ function getCandidate(startAt, data, channel = "web") {
     throw new HttpError(400, "La cantidad contratada de pistas no cubre el grupo.");
   if (startMs < Date.now())
     throw new HttpError(400, "No se pueden crear reservas con hora de inicio pasada.");
-  if (Number(formatLocalTime(startMs).slice(3)) % settings.startIntervalMinutes !== 0)
+  if (!alignedToScheduleStep(startMs, settings.startIntervalMinutes))
     throw new HttpError(
       400,
-      `El inicio debe respetar intervalos de ${settings.startIntervalMinutes} minutos.`,
+      `El inicio debe respetar bloques de ${settings.startIntervalMinutes} minutos.`,
     );
   if (channel === "web" && startMs < Date.now() + settings.minimumAdvanceMinutes * 60_000)
     throw new HttpError(400, "Las reservas web requieren al menos una hora de anticipación.");
@@ -640,6 +660,7 @@ async function handleApi(req, res, url) {
       lateArrivalToleranceMinutes: settings.lateArrivalToleranceMinutes,
       maximumAdvanceDays: settings.maximumAdvanceDays,
       startIntervalMinutes: settings.startIntervalMinutes,
+      extensionDurations: extensionDurationsFor(settings.startIntervalMinutes),
       rateConfigured: settings.generalRateClpPerLaneHour > 0,
       demoPrice: settings.demoMode,
       emailDeliveryConfigured: Boolean(
@@ -1041,7 +1062,7 @@ async function handleApi(req, res, url) {
     const email = requireEmail(body.email);
     const password = requireText(body.password, "Contraseña", 200);
     const address = String(req.socket.remoteAddress ?? "unknown");
-    rateLimit(`login:${email}:${address}`, 8, 15 * 60_000);
+    rateLimit(`login:${email}:${address}`, loginAttemptLimit, 15 * 60_000);
     const user = db.prepare("SELECT * FROM users WHERE email=? AND active=1").get(email);
     const salt = user?.password_salt ?? "00000000000000000000000000000000";
     const expected = Buffer.from(user?.password_hash ?? "0".repeat(128), "hex");
@@ -1348,7 +1369,7 @@ async function handleApi(req, res, url) {
     });
   }
   const actionMatch =
-    /^\/api\/staff\/bookings\/([\w-]+)\/(checkin|finish|resolve-absence|payments|extend|cancel)$/.exec(
+    /^\/api\/staff\/bookings\/([\w-]+)\/(checkin|finish|resolve-absence|payments|extend|reschedule|lock|cancel)$/.exec(
       path,
     );
   if (actionMatch && method === "POST") {
@@ -1357,6 +1378,161 @@ async function handleApi(req, res, url) {
     const body = await readBody(req);
     const reservation = getReservation(id);
     const now = Date.now();
+    if (action === "lock") {
+      if (typeof body.locked !== "boolean")
+        throw new HttpError(400, "Indica si las pistas deben quedar fijadas o flexibles.");
+      if (reservation.commercial_status !== "confirmed")
+        throw new HttpError(409, "Solo se pueden fijar reservas confirmadas.");
+      if (reservation.checked_in_at && !body.locked)
+        throw new HttpError(409, "Una reserva con check-in conserva sus pistas fijadas.");
+      if (Boolean(reservation.manual_lane_lock) === body.locked)
+        return json(res, 200, { booking: reservationPublic(reservation), reused: true });
+      transaction((conn) => {
+        conn
+          .prepare("UPDATE reservations SET manual_lane_lock=?,updated_at=? WHERE id=?")
+          .run(body.locked ? 1 : 0, now, id);
+        addAudit(
+          actor,
+          body.locked ? "reservation_manually_locked" : "reservation_manually_unlocked",
+          "reservation",
+          id,
+          { startMs: reservation.start_ms, lanes: reservation.lanes },
+        );
+      });
+      return json(res, 200, { booking: reservationPublic(getReservation(id)) });
+    }
+    if (action === "reschedule") {
+      const idempotencyKey = requireText(body.idempotencyKey, "Clave de idempotencia", 100);
+      const previous = db
+        .prepare(
+          "SELECT reservation_id,action,result_json FROM reservation_actions WHERE idempotency_key=?",
+        )
+        .get(idempotencyKey);
+      if (previous) {
+        if (previous.reservation_id !== id || previous.action !== "reschedule")
+          throw new HttpError(409, "La clave de cambio ya se usó en otra operación.");
+        return json(res, 200, { ...JSON.parse(previous.result_json), reused: true });
+      }
+      const startMs = Number(body.startMs);
+      if (!Number.isSafeInteger(startMs) || startMs < now)
+        throw new HttpError(400, "El nuevo horario debe ser futuro y válido.");
+      const targetDate = formatLocalDate(startMs);
+      if (!dateLimitOk(targetDate))
+        throw new HttpError(400, "Elige una fecha dentro del rango de operación.");
+      if (
+        reservation.commercial_status !== "confirmed" ||
+        reservation.checked_in_at ||
+        reservation.effective_start_ms
+      )
+        throw new HttpError(409, "Solo se puede mover una reserva futura que aún no inicia.");
+      if (body.expectedStartMs != null && Number(body.expectedStartMs) !== reservation.start_ms)
+        throw new HttpError(409, "La reserva cambió mientras la movías. Recarga el calendario.");
+      const outcome = transaction((conn) => {
+        const duplicate = conn
+          .prepare(
+            "SELECT reservation_id,action,result_json FROM reservation_actions WHERE idempotency_key=?",
+          )
+          .get(idempotencyKey);
+        if (duplicate) {
+          if (duplicate.reservation_id !== id || duplicate.action !== "reschedule")
+            throw new HttpError(409, "La clave de cambio ya se usó en otra operación.");
+          return { result: { ...JSON.parse(duplicate.result_json), reused: true } };
+        }
+        const current = conn.prepare("SELECT * FROM reservations WHERE id=?").get(id);
+        if (
+          !current ||
+          current.start_ms !== reservation.start_ms ||
+          current.end_ms !== reservation.end_ms ||
+          current.commercial_status !== "confirmed" ||
+          current.checked_in_at
+        )
+          throw new HttpError(409, "La reserva cambió mientras la movías. Recarga el calendario.");
+        const settings = getSettings();
+        if (startMs < Date.now())
+          throw new HttpError(400, "El nuevo horario debe ser futuro y válido.");
+        if (!alignedToScheduleStep(startMs, settings.startIntervalMinutes))
+          throw new HttpError(
+            400,
+            `El nuevo horario debe respetar bloques de ${settings.startIntervalMinutes} minutos.`,
+          );
+        const durationMinutes = (current.end_ms - current.start_ms) / 60_000;
+        const endMs = startMs + durationMinutes * 60_000;
+        const day = parseLocalDay(targetDate);
+        const reservations = reservationsForRange(
+          day.start,
+          endMs + settings.preparationMinutes * 60_000,
+        ).filter((other) => other.id !== id);
+        const blocks = blocksForRange(day.start, endMs + settings.preparationMinutes * 60_000);
+        const candidate = selectLaneSetAtTime({
+          startMs,
+          players: current.players,
+          durationMinutes,
+          lanes: current.lane_count,
+          acceptSeparated: current.group_mode === "separated_accepted",
+          preferredLaneId: body.preferredLaneId,
+          reservations,
+          blocks,
+          settings,
+          channel: current.channel,
+        });
+        if (!candidate)
+          throw new HttpError(409, "Ese bloque no está disponible para mover esta reserva.");
+        if (
+          body.acceptedQuoteClp != null &&
+          Number(body.acceptedQuoteClp) !== candidate.quote.totalClp
+        )
+          throw new HttpError(409, "El precio cambió de nuevo; revisa el nuevo importe.");
+        if (candidate.quote.totalClp !== current.quote_clp && body.acceptedQuoteClp == null)
+          return {
+            priceConfirmation: {
+              error:
+                "El horario cambia el importe. Confirma la aceptación del cliente para continuar.",
+              requiresPriceConfirmation: true,
+              oldQuoteClp: current.quote_clp,
+              quoteClp: candidate.quote.totalClp,
+            },
+          };
+        conn.prepare("UPDATE allocations SET active=0 WHERE reservation_id=? AND active=1").run(id);
+        allocateReservation(conn, id, candidate);
+        const quoteJson = { ...candidate.quote, demo: settings.demoMode };
+        conn
+          .prepare(
+            "UPDATE reservations SET start_ms=?,end_ms=?,quote_clp=?,quote_json=?,manual_lane_lock=1,updated_at=? WHERE id=?",
+          )
+          .run(startMs, endMs, candidate.quote.totalClp, JSON.stringify(quoteJson), now, id);
+        if (reservation.request_id)
+          conn
+            .prepare(
+              "UPDATE booking_requests SET current_quote_clp=?,updated_at=? WHERE reservation_id=?",
+            )
+            .run(candidate.quote.totalClp, now, id);
+        addAudit(actor, "booking_rescheduled", "reservation", id, {
+          from: { startMs: current.start_ms, lanes: reservation.lanes },
+          to: { startMs, lanes: candidate.lanes },
+          quoteClp: candidate.quote.totalClp,
+          customerAcceptedNewPrice: body.acceptedQuoteClp != null,
+          manualLaneLock: true,
+        });
+        const saved = reservationPublic(getReservation(id));
+        const actionResult = { booking: saved };
+        conn
+          .prepare(
+            "INSERT INTO reservation_actions(id,idempotency_key,reservation_id,action,result_json,created_at,created_by) VALUES(?,?,?,?,?,?,?)",
+          )
+          .run(
+            randomUUID(),
+            idempotencyKey,
+            id,
+            "reschedule",
+            JSON.stringify(actionResult),
+            now,
+            actor.id,
+          );
+        return { result: actionResult };
+      });
+      if (outcome.priceConfirmation) return json(res, 409, outcome.priceConfirmation);
+      return json(res, 200, outcome.result);
+    }
     if (action === "checkin") {
       if (reservation.checked_in_at)
         return json(res, 200, { booking: reservationPublic(reservation), reused: true });
@@ -1523,9 +1699,14 @@ async function handleApi(req, res, url) {
           throw new HttpError(409, "La clave de extensión ya se usó en otra operación.");
         return json(res, 200, { ...JSON.parse(previous.result_json), reused: true });
       }
+      const settings = getSettings();
+      const extensionDurations = extensionDurationsFor(settings.startIntervalMinutes);
       const minutes = Number(body.minutes);
       if (!extensionDurations.includes(minutes))
-        throw new HttpError(400, "Elige una extensión de 15, 30 o 60 minutos.");
+        throw new HttpError(
+          400,
+          `Elige una extensión de ${settings.startIntervalMinutes} a 60 minutos en ese intervalo.`,
+        );
       if (
         !body.customerAccepted ||
         !reservation.checked_in_at ||
@@ -1536,7 +1717,6 @@ async function handleApi(req, res, url) {
           "Recepción requiere la aceptación del cliente y una reserva en curso.",
         );
       if (now >= reservation.end_ms) throw new HttpError(409, "La reserva ya terminó.");
-      const settings = getSettings();
       const quote = calculateQuote({
         startMs: reservation.end_ms,
         durationMinutes: minutes,
@@ -1822,6 +2002,15 @@ async function handleApi(req, res, url) {
     const endMs = Number(body.endMs);
     if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs)
       throw new HttpError(400, "Intervalo de bloqueo inválido.");
+    const intervalMinutes = getSettings().startIntervalMinutes;
+    if (
+      !alignedToScheduleStep(startMs, intervalMinutes) ||
+      !alignedToScheduleStep(endMs, intervalMinutes)
+    )
+      throw new HttpError(
+        400,
+        `El bloqueo debe comenzar y terminar en bloques de ${intervalMinutes} minutos.`,
+      );
     const laneId = body.laneId == null ? null : Number(body.laneId);
     if (laneId != null && (!Number.isInteger(laneId) || laneId < 1 || laneId > 12))
       throw new HttpError(400, "Pista inválida.");
@@ -1867,7 +2056,7 @@ async function handleApi(req, res, url) {
     const settings = getSettings();
     return json(res, 200, {
       ...settings,
-      extensionDurations,
+      extensionDurations: extensionDurationsFor(settings.startIntervalMinutes),
       pendingEmailCount: db
         .prepare("SELECT COUNT(*) AS count FROM email_outbox WHERE status='queued'")
         .get().count,
@@ -1918,12 +2107,8 @@ async function handleApi(req, res, url) {
       updated.generalRateClpPerLaneHour < 0
     )
       throw new HttpError(400, "La tarifa debe ser un entero CLP igual o mayor que cero.");
-    if (
-      !Number.isInteger(updated.startIntervalMinutes) ||
-      updated.startIntervalMinutes < 5 ||
-      updated.startIntervalMinutes > 60
-    )
-      throw new HttpError(400, "El intervalo de inicio debe estar entre 5 y 60 minutos.");
+    if (!supportedScheduleIntervals.includes(updated.startIntervalMinutes))
+      throw new HttpError(400, "El bloque de agenda debe ser 5, 10, 12, 15, 20, 30 o 60 minutos.");
     if (
       !Number.isInteger(updated.calendarHourWidthPx) ||
       updated.calendarHourWidthPx < 36 ||

@@ -55,6 +55,7 @@ export default defineConfig({
       DATABASE_PATH: databasePath,
       MVP_MODE: "demo",
       NODE_ENV: "development",
+      PLAYWRIGHT_LOGIN_ATTEMPT_LIMIT: "50",
       PORT: "3001",
       TOKEN_SECRET: "playwright-demo-secret-with-at-least-32-bytes",
       MAIL_DELIVERY_URL: "http://127.0.0.1:3002/deliver",

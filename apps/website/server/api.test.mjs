@@ -308,6 +308,128 @@ test("HTTP API authenticates staff and serializes competing claims on the final 
   assert.equal(repeatedManual.status, 200);
   assert.equal((await repeatedManual.json()).reused, true);
 
+  const blockDate = formatLocalDate(Date.now() + 30 * 86_400_000);
+  const blockStart = localDateTimeToEpoch(`${blockDate}T17:00`);
+  const blockBookingResponse = await fetch(`${base}/api/staff/bookings`, {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie },
+    body: JSON.stringify({
+      idempotencyKey: "block-sized-booking",
+      channel: "phone",
+      customerName: "Reserva en bloques",
+      phone: "+56912345678",
+      players: 72,
+      laneCount: 12,
+      startAt: `${blockDate}T17:00`,
+      durationMinutes: 70,
+    }),
+  });
+  assert.equal(blockBookingResponse.status, 201);
+  const blockBooking = (await blockBookingResponse.json()).booking;
+  assert.equal(blockBooking.end - blockBooking.start, 70 * 60_000);
+  const misalignedMaintenance = await fetch(`${base}/api/staff/blocks`, {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie, origin: base },
+    body: JSON.stringify({
+      laneId: 1,
+      startMs: localDateTimeToEpoch(`${blockDate}T22:05`),
+      endMs: localDateTimeToEpoch(`${blockDate}T22:15`),
+      reason: "Bloque fuera de la cuadrícula configurada",
+    }),
+  });
+  assert.equal(misalignedMaintenance.status, 400);
+  const invalidBlockDuration = await fetch(`${base}/api/staff/bookings`, {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie },
+    body: JSON.stringify({
+      idempotencyKey: "invalid-block-duration",
+      channel: "phone",
+      customerName: "Duración no alineada",
+      phone: "+56912345678",
+      players: 4,
+      startAt: `${blockDate}T20:00`,
+      durationMinutes: 65,
+    }),
+  });
+  assert.equal(invalidBlockDuration.status, 400);
+
+  const lockedBookingResponse = await fetch(`${base}/api/staff/bookings/${blockBooking.id}/lock`, {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie },
+    body: JSON.stringify({ locked: true }),
+  });
+  assert.equal(lockedBookingResponse.status, 200);
+  assert.equal((await lockedBookingResponse.json()).booking.manualLaneLock, true);
+  const movedStart = localDateTimeToEpoch(`${blockDate}T19:00`);
+  const changedTariff = await fetch(`${base}/api/staff/settings`, {
+    method: "PUT",
+    headers: {
+      cookie: adminCookie,
+      origin: base,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      rateBands: [
+        {
+          weekday: weekdayOf(blockDate),
+          start: "18:00",
+          end: "20:00",
+          rateClpPerLaneHour: 20_000,
+        },
+      ],
+    }),
+  });
+  assert.equal(changedTariff.status, 200);
+  const movedPayload = {
+    idempotencyKey: "move-block-sized-booking",
+    expectedStartMs: blockStart,
+    startMs: movedStart,
+    preferredLaneId: 1,
+  };
+  const pricePreviewResponse = await fetch(
+    `${base}/api/staff/bookings/${blockBooking.id}/reschedule`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify(movedPayload),
+    },
+  );
+  assert.equal(pricePreviewResponse.status, 409);
+  const pricePreview = await pricePreviewResponse.json();
+  assert.equal(pricePreview.requiresPriceConfirmation, true);
+  assert.ok(pricePreview.quoteClp > pricePreview.oldQuoteClp);
+  const movedBookingResponse = await fetch(
+    `${base}/api/staff/bookings/${blockBooking.id}/reschedule`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify({ ...movedPayload, acceptedQuoteClp: pricePreview.quoteClp }),
+    },
+  );
+  assert.equal(movedBookingResponse.status, 200);
+  const movedBooking = (await movedBookingResponse.json()).booking;
+  assert.equal(movedBooking.start, movedStart);
+  assert.equal(movedBooking.end - movedBooking.start, 70 * 60_000);
+  assert.equal(movedBooking.manualLaneLock, true);
+  const movedBoardResponse = await fetch(`${base}/api/staff/board?date=${blockDate}`, {
+    headers: { cookie },
+  });
+  assert.equal(movedBoardResponse.status, 200);
+  const movedBoardBooking = (await movedBoardResponse.json()).reservations.find(
+    (booking) => booking.id === blockBooking.id,
+  );
+  assert.ok(movedBoardBooking.lanes.includes(1));
+  const restoreRates = await fetch(`${base}/api/staff/settings`, {
+    method: "PUT",
+    headers: {
+      cookie: adminCookie,
+      origin: base,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ rateBands: originalSettings.rateBands }),
+  });
+  assert.equal(restoreRates.status, 200);
+
   const verificationMarker = output.length;
   const emailStarted = await fetch(`${base}/api/email/start`, {
     method: "POST",

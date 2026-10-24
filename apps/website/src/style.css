@@ -1023,13 +1023,41 @@ footer b {
 .track {
   position: relative;
   border-top: 1px solid #edf0ed;
-  background: repeating-linear-gradient(
-    90deg,
-    transparent 0,
-    transparent calc(var(--tick) - 1px),
-    #edf0ed calc(var(--tick) - 1px),
-    #edf0ed var(--tick)
-  );
+  background-image:
+    repeating-linear-gradient(
+      90deg,
+      transparent 0,
+      transparent max(0px, calc(var(--slot-width) - 1px)),
+      #e9e5e1 max(0px, calc(var(--slot-width) - 1px)),
+      #e9e5e1 var(--slot-width)
+    ),
+    repeating-linear-gradient(
+      90deg,
+      transparent 0,
+      transparent calc(var(--tick) - 1px),
+      #d8d2cc calc(var(--tick) - 1px),
+      #d8d2cc var(--tick)
+    );
+}
+.calendar-selection {
+  position: absolute;
+  z-index: 2;
+  top: 3px;
+  bottom: 3px;
+  overflow: hidden;
+  border: 1px solid #aa0737;
+  border-radius: 5px;
+  background: #aa07371c;
+  color: #83052c;
+  font-size: 9px;
+  line-height: 35px;
+  text-align: center;
+  pointer-events: none;
+}
+.track.drag-target {
+  outline: 2px solid #aa0737;
+  outline-offset: -2px;
+  background-color: #fff1f5;
 }
 .event {
   position: absolute;
@@ -2143,6 +2171,26 @@ footer {
 }
 .event.booked:hover {
   background: #f7cfdb;
+}
+.booking-event[draggable="true"] {
+  cursor: grab;
+}
+.booking-event[draggable="true"]:active,
+.booking-event.dragging {
+  cursor: grabbing;
+}
+.booking-event.dragging {
+  opacity: 0.45;
+}
+.booking-resize-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 12px;
+  border-left: 2px solid #83052c;
+  background: #aa07371c;
+  cursor: ew-resize;
 }
 .event.held {
   background: #fff1df;

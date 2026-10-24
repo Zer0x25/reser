@@ -294,8 +294,8 @@ export function findAlternatives({
   const sets = laneSetsFor(players, laneCount, acceptSeparated);
   if (!sets.length)
     throw new Error("No existe una agrupación física válida para esta cantidad de pistas.");
-  if (!Number.isInteger(durationMinutes) || durationMinutes < 60 || durationMinutes % 60 !== 0)
-    throw new Error("La duración inicial debe ser de una o más horas completas.");
+  if (!Number.isInteger(durationMinutes) || durationMinutes < 60)
+    throw new Error("La duración inicial debe ser de al menos una hora.");
   const selectedDay = parseLocalDay(date);
   const previousDate = shiftLocalDate(date, -1);
   const windows = [date, previousDate]
@@ -307,14 +307,21 @@ export function findAlternatives({
     );
   if (!windows.length) return [];
   const stepMinutes = Number(settings.startIntervalMinutes ?? 10);
+  const stepMs = stepMinutes * 60_000;
+  if (
+    !Number.isInteger(durationMinutes) ||
+    durationMinutes < 60 ||
+    durationMinutes % stepMinutes !== 0
+  )
+    throw new Error(`La duración debe usar bloques de ${stepMinutes} minutos.`);
   const startTime = localDateTimeToEpoch(`${date}T${preferredTime}`);
   const candidates = [];
   const seenStartTimes = new Set();
   for (const window of windows) {
     for (
-      let startMs = window.openMs;
+      let startMs = Math.ceil(window.openMs / stepMs) * stepMs;
       startMs + durationMinutes * 60_000 <= window.closeMs;
-      startMs += stepMinutes * 60_000
+      startMs += stepMs
     ) {
       if (startMs < selectedDay.start || startMs >= selectedDay.end || seenStartTimes.has(startMs))
         continue;
@@ -417,9 +424,12 @@ export function selectLaneSetAtTime({
   blocks,
   settings,
   channel = "web",
+  preferredLaneId,
 }) {
   const laneCount = contractedLanes ?? minimumLanes(players);
-  const sets = laneSetsFor(players, laneCount, acceptSeparated);
+  const sets = laneSetsFor(players, laneCount, acceptSeparated).filter(
+    (lanes) => preferredLaneId == null || lanes.includes(Number(preferredLaneId)),
+  );
   const endMs = startMs + durationMinutes * 60_000;
   if (
     !sets.length ||
