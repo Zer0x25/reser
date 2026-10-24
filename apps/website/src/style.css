@@ -2462,3 +2462,49 @@ footer {
     justify-self: start;
   }
 }
+
+/* Keep secondary labels readable across the booking and reception flows. */
+.pill,
+.tag {
+  color: #4f5b55;
+}
+.tag.green {
+  color: #006a4b;
+}
+.tag.amber {
+  color: #754000;
+}
+.ghost {
+  color: #56615c;
+}
+.staff-request b small,
+.staff-request > div > small,
+.staff-request p {
+  color: #56615c;
+}
+.muted,
+.modal .text-button {
+  color: #56615c;
+}
+.manage-page .back {
+  color: #405e51;
+}
+.option-time small,
+.option-price small,
+.total small,
+.verify-row small,
+.privacy,
+.manage-grid span,
+.detail-grid span {
+  color: #56615c;
+}
+@media (max-width: 700px) {
+  .block-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.block-form input {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}

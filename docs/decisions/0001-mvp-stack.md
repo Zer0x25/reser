@@ -57,4 +57,5 @@ El repositorio partía de un starter vacío de Vite+. El producto necesita una i
 ## Referencias
 
 - [Prompt inicial de implementación y alcance funcional](../product/initial-one-shot-implementation-prompt.md).
+- [ADR 0004: límites de dominio, casos de uso y UX](0004-domain-use-cases-and-ux.md).
 - [README y estado conocido del MVP](../../README.md).

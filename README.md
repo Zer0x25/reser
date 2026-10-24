@@ -31,15 +31,16 @@ Son credenciales exclusivas de demostración. Los códigos de verificación y me
 pnpm exec vp run ready
 pnpm exec vp run e2e:install
 pnpm exec vp run smoke
+pnpm exec vp run smoke:preview
 pnpm exec vp run e2e
 pnpm exec vp run regression
 ```
 
-`test:unit` y `test:integration` ejecutan cada capa por separado. `ready` suma formato, lint, tipos y compilación. Usa `e2e:install` una vez para instalar Chromium. `smoke` corre tres verificaciones rápidas de navegador; `e2e` ejecuta siete pruebas, incluidos solicitud/aprobación, check-in, axe y tamaños tablet/laptop; `regression` corre todas las verificaciones antes de integrar un cambio. Las pruebas de API y E2E usan bases SQLite temporales y no modifican el archivo de demostración. El correo de prueba se captura en un servicio local.
+`test:unit` y `test:integration` ejecutan cada capa por separado. `ready` suma formato, lint, tipos, toda la suite de unidad/integración y compilación. Usa `e2e:install` una vez para instalar Chromium. `smoke` corre tres verificaciones rápidas contra Vite; `smoke:preview` compila y corre las mismas tres contra el artefacto servido localmente por Node; `e2e` ejecuta nueve pruebas, incluidos aprobación, aceptación de precio, renovación/cancelación, check-in/extensión, axe y ocho anchos de pantalla. `regression` corre `ready`, E2E y smoke compilado antes de integrar un cambio. Las pruebas de API y E2E usan bases SQLite temporales y no modifican el archivo de demostración. El correo de prueba se captura en un servicio local.
 
 Para cobertura dirigida ejecuta `pnpm exec vp run coverage:domain` y `pnpm exec vp run coverage:calendar`. La cobertura de dominio/tiempo es 88.07% líneas, 81.76% ramas y 95.35% funciones; `calendar.ts` marca 100% en las tres métricas. No representan cobertura global de la API ni de la interfaz.
 
-La estrategia por niveles, escenarios críticos, aislamiento y pendientes está en [`docs/testing/strategy.md`](docs/testing/strategy.md). La arquitectura y límites entre UI, dominio, API y persistencia están en [`docs/design/system-design.md`](docs/design/system-design.md).
+La estrategia por niveles, escenarios críticos, aislamiento y pendientes está en [`docs/testing/strategy.md`](docs/testing/strategy.md). El diseño del sistema y los límites entre UX, dominio, API y persistencia están en [`docs/design/system-design.md`](docs/design/system-design.md). La evolución incremental de esos límites está documentada en [ADR 0004](docs/decisions/0004-domain-use-cases-and-ux.md).
 
 ## Producción
 
@@ -106,8 +107,8 @@ La optimización utiliza una puntuación de escenarios de demanda y una búsqued
 - La ficha y el tablero no incluyen todos los indicadores históricos de ocupación, fragmentación, conversión e ingresos solicitados. Los indicadores presentes usan registros reales.
 - La forma física del salón comienza con la distribución supuesta 2 × 6; la administración todavía no edita coordenadas o adyacencias.
 - La cola de correo reintenta cada 30 segundos mientras el proceso está activo. Para varios procesos API se debe añadir coordinación de trabajadores antes del despliegue horizontal.
-- La suite E2E cubre solicitud/aprobación/seguimiento, check-in, navegación por teclado, móvil a 390 px y disposición a 768/1024 px. axe comprueba la entrada pública y el tablero; faltan cancelación, extensión, aceptación de precio, más estados de accesibilidad y smoke de una URL de vista previa.
+- Aún faltan flujos de modificación, detección de abuso en todos los canales, incidencias y reubicación de pistas, además de escenarios de pagos más completos. Tampoco hay smoke de URL desplegada, pruebas manuales con lector de pantalla ni cobertura global instrumentada.
 
 La especificación inicial completa se conserva en [`docs/product/initial-one-shot-implementation-prompt.md`](docs/product/initial-one-shot-implementation-prompt.md). Este README describe el estado actual y sus límites; el prompt define el alcance funcional objetivo.
 
-Decisiones aceptadas: [ADR 0001 — stack y límites arquitectónicos](docs/decisions/0001-mvp-stack.md), [ADR 0002 — ciclo de reservas, pagos y límites de demo](docs/decisions/0002-reservation-and-demo-boundaries.md) y [ADR 0003 — estrategia de pruebas](docs/decisions/0003-testing-strategy.md).
+Decisiones aceptadas: [ADR 0001 — stack y límites arquitectónicos](docs/decisions/0001-mvp-stack.md), [ADR 0002 — ciclo de reservas, pagos y límites de demo](docs/decisions/0002-reservation-and-demo-boundaries.md), [ADR 0003 — estrategia de pruebas](docs/decisions/0003-testing-strategy.md) y [ADR 0004 — límites de dominio y UX](docs/decisions/0004-domain-use-cases-and-ux.md).

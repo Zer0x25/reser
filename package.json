@@ -9,10 +9,11 @@
     "test:integration": "vp run website#test:integration",
     "coverage:domain": "vp run website#coverage:domain",
     "coverage:calendar": "vp run website#coverage:calendar",
-    "regression": "vp run ready && vp run e2e",
+    "regression": "vp run ready && vp run e2e && vp run smoke:preview",
     "e2e": "vp run website#e2e",
     "e2e:install": "vp run website#e2e:install",
     "smoke": "vp run website#smoke",
+    "smoke:preview": "vp run website#smoke:preview",
     "dev": "vp run website#dev",
     "prepare": "vp config"
   },

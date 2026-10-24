@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const databasePath = join(tmpdir(), `bowling-e2e-${process.pid}.sqlite`);
+const previewMode = process.env.PLAYWRIGHT_PREVIEW === "true";
+const appUrl = previewMode ? "http://127.0.0.1:3001" : "http://127.0.0.1:5173";
 process.on("exit", () => {
   for (const suffix of ["", "-shm", "-wal"]) {
     try {
@@ -22,7 +24,7 @@ export default defineConfig({
   timeout: 30_000,
   expect: { timeout: 8_000 },
   use: {
-    baseURL: "http://127.0.0.1:5173",
+    baseURL: appUrl,
     browserName: "chromium",
     headless: true,
     locale: "es-CL",
@@ -36,9 +38,10 @@ export default defineConfig({
     screenshot: "only-on-failure",
   },
   webServer: {
-    command:
-      "node e2e/mail-sink.mjs & MAIL_SINK_PID=$!; node server/index.mjs & API_PID=$!; trap 'kill $API_PID $MAIL_SINK_PID 2>/dev/null || true' EXIT; ./node_modules/.bin/vp dev --host 127.0.0.1",
-    url: "http://127.0.0.1:5173",
+    command: previewMode
+      ? "node e2e/mail-sink.mjs & MAIL_SINK_PID=$!; node server/index.mjs & API_PID=$!; trap 'kill $API_PID $MAIL_SINK_PID 2>/dev/null || true' EXIT; wait $API_PID"
+      : "node e2e/mail-sink.mjs & MAIL_SINK_PID=$!; node server/index.mjs & API_PID=$!; trap 'kill $API_PID $MAIL_SINK_PID 2>/dev/null || true' EXIT; ./node_modules/.bin/vp dev --host 127.0.0.1",
+    url: appUrl,
     reuseExistingServer: false,
     stdout: "pipe",
     stderr: "pipe",
@@ -52,7 +55,7 @@ export default defineConfig({
       MAIL_DELIVERY_URL: "http://127.0.0.1:3002/deliver",
       MAIL_DELIVERY_TOKEN: "e2e-mail-token",
       MAIL_FROM: "reservas@e2e.example.test",
-      PUBLIC_APP_URL: "http://127.0.0.1:5173",
+      PUBLIC_APP_URL: appUrl,
     },
   },
 });

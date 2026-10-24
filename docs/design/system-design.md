@@ -2,7 +2,7 @@
 
 **Estado:** diseño actual del MVP, con límites de evolución
 **Fecha:** 2026-10-24
-**ADRs relacionados:** [0001 — stack y límites arquitectónicos](../decisions/0001-mvp-stack.md), [0002 — ciclo de reservas y datos de demo](../decisions/0002-reservation-and-demo-boundaries.md), [0003 — estrategia de pruebas](../decisions/0003-testing-strategy.md)
+**ADRs relacionados:** [0001 — stack y límites arquitectónicos](../decisions/0001-mvp-stack.md), [0002 — ciclo de reservas y datos de demo](../decisions/0002-reservation-and-demo-boundaries.md), [0003 — estrategia de pruebas](../decisions/0003-testing-strategy.md), [0004 — dominio, casos de uso y UX](../decisions/0004-domain-use-cases-and-ux.md)
 
 ## Objetivo y alcance
 
@@ -28,16 +28,16 @@ En desarrollo, Vite sirve la interfaz y reenvía `/api` al servidor. En producci
 
 ## Responsabilidad por módulo
 
-| Módulo                           | Responsabilidad actual                                                                                                                                   | Límite que debe conservarse                                                                                                                                                                   |
-| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/website/shared/time.mjs`   | Conversión y formato de fechas en `America/Santiago`; rechazo de horas inexistentes por DST.                                                             | Funciones deterministas, sin DOM, HTTP ni acceso a SQLite. Se comparte entre navegador y servidor.                                                                                            |
-| `apps/website/server/domain.mjs` | Capacidad, agrupación física, tarifas, disponibilidad, alternativas y asignación.                                                                        | No importar la interfaz ni realizar I/O. Todas las decisiones comerciales de disponibilidad se validan aquí.                                                                                  |
-| `apps/website/server/db.mjs`     | Esquema, migraciones, persistencia y fixtures exclusivos de demo.                                                                                        | SQLite es la fuente única de inventario; pruebas usan bases temporales.                                                                                                                       |
-| `apps/website/server/index.mjs`  | Rutas HTTP, autorización, coordinación de flujos, transacciones, auditoría y correo. El tablero incluye los límites horarios calculados por el servidor. | Es la frontera de entrada; mantener las transacciones de inventario y controles de acceso en el servidor. Su tamaño hace que sea el principal candidato a extracción futura por casos de uso. |
-| `apps/website/src/calendar.ts`   | Cálculos puros de navegación, escala, selección de intervalos y comparación con el horario operativo entregado por la API.                               | No contiene acceso a red ni manipulación del DOM; se prueba como lógica de presentación y no interpreta horarios comerciales por segunda vez.                                                 |
-| `apps/website/src/main.ts`       | Renderizado HTML, estado de pantalla, eventos, formularios y llamadas a la API.                                                                          | UX y estado visual permanecen aquí; las reglas de reserva y disponibilidad no se duplican en el navegador. Conviene separar vistas por flujo cuando haya cobertura E2E suficiente.            |
+| Módulo                           | Responsabilidad actual                                                                                                                                   | Límite que debe conservarse                                                                                                                                                                              |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/website/shared/time.mjs`   | Conversión y formato de fechas en `America/Santiago`; rechazo de horas inexistentes por DST.                                                             | Funciones deterministas, sin DOM, HTTP ni acceso a SQLite. Se comparte entre navegador y servidor.                                                                                                       |
+| `apps/website/server/domain.mjs` | Capacidad, agrupación física, tarifas, disponibilidad, alternativas y asignación.                                                                        | No importar la interfaz ni realizar I/O. Todas las decisiones comerciales de disponibilidad se validan aquí.                                                                                             |
+| `apps/website/server/db.mjs`     | Esquema, migraciones, persistencia y fixtures exclusivos de demo.                                                                                        | SQLite es la fuente única de inventario; pruebas usan bases temporales.                                                                                                                                  |
+| `apps/website/server/index.mjs`  | Rutas HTTP, autorización, coordinación de flujos, transacciones, auditoría y correo. El tablero incluye los límites horarios calculados por el servidor. | Es la frontera de entrada actual; mantener autorización y transacciones de inventario en servidor. Es grande y combina adaptadores HTTP con casos de uso, por lo que se extraerá gradualmente por flujo. |
+| `apps/website/src/calendar.ts`   | Cálculos puros de navegación, escala, selección de intervalos y comparación con el horario operativo entregado por la API.                               | No contiene acceso a red ni manipulación del DOM; se prueba como lógica de presentación y no interpreta horarios comerciales por segunda vez.                                                            |
+| `apps/website/src/main.ts`       | Renderizado HTML, estado de pantalla, eventos, formularios y llamadas a la API.                                                                          | La UX y el estado de pantalla pertenecen al cliente; no duplicar reglas comerciales. Aún reúne varias vistas, por lo que conviene separarlas por flujo conservando contratos y pruebas E2E.              |
 
-La extracción inicial de tiempo y cálculos del calendario reduce duplicación comprobable. La API calcula el rango permitido y la interfaz usa ese rango para responder al clic sin mantener una segunda copia de las reglas semanales. No es una reescritura de la interfaz ni de la API.
+La extracción inicial de tiempo y cálculos del calendario reduce duplicación comprobable. La API calcula el rango permitido y la interfaz usa ese rango para responder al clic sin mantener una segunda copia de las reglas semanales. No es una reescritura de la interfaz ni de la API. Los límites y el orden sugerido de futuras extracciones están registrados en [ADR 0004](../decisions/0004-domain-use-cases-and-ux.md).
 
 ## Flujos y consistencia
 
@@ -91,25 +91,26 @@ La estrategia operativa está en [Testing strategy](../testing/strategy.md). La 
 1. **Unidad de dominio y tiempo:** calendario local, DST, reglas de capacidad, tarifas, agrupación y disponibilidad.
 2. **Unidad de presentación:** cálculos puros del calendario que no requieren DOM.
 3. **Integración API:** SQLite aislado, autenticación, roles, idempotencia, concurrencia, pago manual y bloqueos.
-4. **E2E navegador:** verificación de correo simulada, solicitud de grupo, aprobación y seguimiento; reserva presencial/check-in; calendario por teclado y móvil; disposición tablet/laptop; axe para entrada pública y tablero.
-5. **Smoke:** carga pública, navegación/zoom/teclado del calendario y desplazamiento a 390 px. No hay smoke de vista previa hasta configurar hosting.
+4. **E2E navegador:** verificación de correo local, aprobación de grupo, recotización y aceptación, renovación/cancelación, reserva presencial/check-in/extensión, calendario por teclado y móvil. axe cubre siete estados y el reflow se revisa en 320–428, 768 y 1024 px.
+5. **Smoke:** tres recorridos de entrada pública y calendario, en Vite de desarrollo y contra el artefacto compilado servido localmente por Node. No hay smoke de URL desplegada hasta configurar hosting.
 
-La cobertura dirigida disponible es 88.07% de líneas, 81.76% de ramas y 95.35% de funciones para dominio/tiempo; `calendar.ts` registra 100% en las tres métricas. No hay una cifra global porque la API HTTP y las vistas no están instrumentadas en estos reportes. No se fija un umbral global hasta tener esa línea base. axe automatiza criterios WCAG en dos pantallas; no reemplaza una revisión manual con teclado y lector de pantalla ni cubre todos los estados.
+La cobertura dirigida disponible es 88.07% de líneas, 81.76% de ramas y 95.35% de funciones para dominio/tiempo; `calendar.ts` registra 100% en las tres métricas. No hay una cifra global porque la API HTTP y las vistas no están instrumentadas en estos reportes. No se fija un umbral global hasta tener esa línea base. axe automatiza criterios WCAG en los estados indicados; no reemplaza una revisión manual con teclado y lector de pantalla ni cubre todos los estados.
 
 ## Despliegue y operación
 
-La producción empieza cerrada si no hay horarios, tarifas, cuenta de administración, secreto estable, almacenamiento persistente y proveedor de correo. La vista previa debe utilizar datos sintéticos y nunca mandar pagos ni correos reales. Actualmente no hay pipeline de despliegue automático: el workflow de calidad ejecuta checks, pruebas y E2E, pero no publica.
+La producción empieza cerrada si no hay horarios, tarifas, cuenta de administración, secreto estable, almacenamiento persistente y proveedor de correo. La vista previa debe utilizar datos sintéticos y nunca mandar pagos ni correos reales. Actualmente no hay pipeline de despliegue automático: el workflow de calidad ejecuta checks, pruebas, E2E y smoke del artefacto compilado, pero no publica.
 
 ## Evolución incremental
 
 1. Mantener el dominio comprobable sin UI y añadir reglas a sus pruebas al cerrar pendientes del producto.
-2. Extraer de `main.ts` una vista por flujo cuando permita reducir acoplamiento y quede cubierta por pruebas de navegador.
-3. Extraer casos de uso de `index.mjs` cuando una ruta crezca o se comparta lógica, manteniendo límites transaccionales y contratos HTTP.
+2. Extraer de `main.ts` una vista por flujo cuando permita reducir acoplamiento y quede cubierta por pruebas de navegador; mantener en módulos puros la lógica visual determinista.
+3. Extraer casos de uso de `index.mjs` cuando una ruta crezca o se comparta lógica. Dejar adaptadores HTTP enfocados en parsear/validar/enviar respuestas y conservar las transacciones del dominio en el servidor.
 4. Reconsiderar base de datos o cola distribuida solo al requerir varias instancias, sedes o carga que exceda el proceso actual; registrar la decisión en un ADR.
 
 ## Límites conocidos
 
 - La interfaz principal todavía mantiene varias vistas y su estado en `main.ts`; la separación actual es incremental.
-- E2E cubre solicitud/aprobación, reserva presencial/check-in y calendario, pero aún faltan cancelación, extensión, aceptación de precio, modales y otros anchos móviles.
+- E2E ya cubre aprobación, cambio y aceptación de precio, renovación/cancelación, reserva presencial, check-in y extensión. Aún faltan flujos de modificación, abuso, incidencias de pista y pagos más completos descritos en la especificación.
+- La estrategia local no verifica una URL desplegada; tampoco hay pruebas manuales con lector de pantalla o instrumentación global de cobertura.
 - El optimizador es una heurística determinista acotada; no prueba un óptimo global.
 - No se ejecutan cobros ni devoluciones y no se automatizan políticas comerciales aún no definidas.

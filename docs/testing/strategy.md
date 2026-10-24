@@ -1,85 +1,73 @@
 # Estrategia de pruebas
 
-**Estado:** vigente para el MVP
-**Fecha:** 2026-10-24
-**Decisión relacionada:** [ADR 0003 — estrategia de pruebas](../decisions/0003-testing-strategy.md)
+**Estado:** vigente para el MVP · **Fecha:** 2026-10-24 · **Decisión relacionada:** [ADR 0003 — estrategia de pruebas](../decisions/0003-testing-strategy.md)
 
-## Objetivo
+## Objetivo y niveles
 
-Detectar errores de reglas, integración y UX antes de integrar cambios y repetir un recorrido corto en la vista previa. Las pruebas son deterministas, usan datos desechables y no contactan clientes ni servicios reales.
+Probar reglas comerciales y concurrencia cerca de su implementación, y reservar el navegador para recorridos que dependen de interacción real. Cada prueba usa datos desechables; ninguna se conecta a clientes, correo productivo, pasarelas ni bases remotas.
 
-## Capas y comandos
+| Nivel                                | Qué valida                                                                                                                                                    | Herramienta y alcance                                                                                                       | Comando                                                     |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| L0 · calidad estática y build        | Formato, lint, tipos y compilación.                                                                                                                           | Vite+ en todo el workspace.                                                                                                 | `pnpm exec vp check` · `pnpm exec vp run website#build`     |
+| L1 · unidad                          | Capacidad, agrupación, preparación, horarios, tarifas, promociones, alternativas, DST y funciones puras de navegación/escala del calendario.                  | `node:test` para dominio/tiempo; Vite+ Test para `src/calendar.ts`.                                                         | `pnpm exec vp run test:unit`                                |
+| L2 · integración/API                 | Contratos HTTP observables, roles, persistencia, idempotencia, concurrencia, verificación de correo local, pagos manuales y bloqueos.                         | `node:test`, servidor Node real y SQLite temporal.                                                                          | `pnpm exec vp run test:integration`                         |
+| L3 · E2E                             | Flujos de cliente y recepción que cruzan UI y API: solicitud, aprobación, cambio de precio, renovación/cancelación, reserva presencial, check-in y extensión. | Playwright con Chromium, Vite/API reales, correo local y SQLite temporal.                                                   | `pnpm exec vp run e2e`                                      |
+| L4 · smoke                           | Recorridos esenciales: entrada pública, calendario de recepción y uso móvil del calendario.                                                                   | Tres pruebas Playwright etiquetadas `@smoke`, primero contra dev y después contra la aplicación compilada servida por Node. | `pnpm exec vp run smoke` · `pnpm exec vp run smoke:preview` |
+| Transversal · accesibilidad y reflow | Axe WCAG 2.0/2.1/2.2 A/AA en siete estados; reflow de recepción en 320–428, 768 y 1024 px.                                                                    | Playwright + axe-core; el calendario conserva su propio desplazamiento horizontal.                                          | Incluido en `e2e` y `regression`                            |
 
-| Nivel                      | Qué valida                                                                                                                                                                                                                                           | Herramienta / alcance                                                                                 | Comando                                        |
-| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| Unidad del dominio y fecha | Tarifas, capacidad, agrupación, preparación, bloqueos, alternativas, conversión local y DST.                                                                                                                                                         | `node:test`; funciones puras de `server/domain.mjs` y `shared/time.mjs`.                              | `pnpm exec vp run test:unit`.                  |
-| Unidad de presentación     | Navegación de días, rangos, zoom y selección de una franja.                                                                                                                                                                                          | Vite+ Test/Vitest sobre `src/calendar.ts`, sin DOM ni servidor.                                       | `pnpm exec vp run test:unit`.                  |
-| Integración/API            | HTTP real con SQLite temporal: roles, disponibilidad, escritura concurrente, idempotencia, correo de desarrollo, pagos manuales y mantenimiento.                                                                                                     | `node:test`; cada proceso usa una base en el directorio temporal.                                     | `pnpm exec vp run test:integration`.           |
-| E2E navegador              | Verificación de correo de prueba, solicitud grande, aprobación de recepción, seguimiento privado, reserva presencial y check-in; navegación por teclado; calendario móvil; disposición a 768/1024 px; axe WCAG 2.2 A/AA en página pública y tablero. | Playwright con Chromium, API y Vite reales, SQLite temporal y correo capturado por un sumidero local. | `pnpm exec vp run e2e`.                        |
-| Smoke local                | Carga pública; navegación/zoom/teclado del calendario de recepción; desplazamiento del calendario a 390 px.                                                                                                                                          | Tres pruebas Playwright etiquetadas `@smoke`.                                                         | `pnpm exec vp run smoke`.                      |
-| Smoke de vista previa      | Ejecuta los flujos E2E esenciales contra una URL de vista previa cuando esa infraestructura exista.                                                                                                                                                  | Playwright, entorno separado y fixtures aprobadas para test.                                          | Aún no existe URL de vista previa configurada. |
+### Pipeline de regresión
 
-`ready` incluye revisión de formato/lint/tipos, todas las pruebas unitarias y de integración, y build. `regression` ejecuta `ready` y las siete pruebas E2E. El workflow de GitHub instala Chromium y corre `regression` en cada push y pull request. Las tres pruebas etiquetadas `@smoke` forman el comando corto `smoke`.
+`pnpm exec vp run regression` ejecuta, en este orden:
 
-## Escenarios críticos
+1. `ready`: `vp check`, pruebas de unidad e integración del workspace y build.
+2. `e2e`: las nueve pruebas de navegador completas.
+3. `smoke:preview`: vuelve a compilar el sitio y ejecuta las tres pruebas smoke contra los archivos compilados servidos por el proceso Node local en el puerto 3001.
 
-### Reglas e inventario
+El workflow de GitHub corre `regression` en cada push y pull request e instala Chromium. El smoke de vista previa valida el artefacto compilado en un entorno local aislado; no es una prueba contra un hosting ni un despliegue real, que aún no está configurado. `smoke` sigue disponible para una verificación corta sobre Vite en desarrollo.
 
-- Capacidad de 1–72 jugadores y agrupación física válida.
-- Horario normal, cierre que cruza medianoche, excepciones, preparación y mantenimiento.
-- No solapar asignaciones activas incompatibles; dos solicitudes que compiten por la última capacidad producen exactamente un ganador.
-- Repetir una escritura con la misma clave idempotente no crea una segunda reserva.
-- El importe se calcula por intervalos tarifarios y promociones elegibles sin exceder el subtotal aplicable.
+## Cobertura funcional actual
 
-### Hora local
+- **Dominio y hora:** capacidad, parejas físicas, agrupación, buffers de preparación, excepciones, horarios nocturnos, DST y cálculo determinista de alternativas. Las pruebas comparan los criterios de primera opción, cercanía y compactación básica; esto no demuestra optimalidad global del optimizador.
+- **API e inventario:** autenticación/roles, SQLite, escrituras repetidas, solicitudes que compiten por la última capacidad, seguimiento y operaciones manuales.
+- **Cliente web:** verificación local de correo, solicitud de tres o más pistas, aprobación humana, recotización y aceptación del nuevo importe, renovación de enlace vencido y cancelación elegible.
+- **Recepción:** alta presencial, check-in y extensión autorizada de una reserva ocupada, verificando el nuevo término.
+- **Accesibilidad:** axe revisa búsqueda pública, formulario de solicitud, tablero, bandeja, ficha modal, renovación y extensión. Los tests de axe se ejecutan con tags WCAG 2.0/2.1/2.2 A/AA.
+- **Reflow:** el documento no puede exceder el viewport de 320, 360, 375, 390, 414, 428, 768 ni 1024 px. El eje de horas del calendario puede desplazarse dentro de su contenedor horizontal propio.
 
-- Inicio/fin de día local en cambios DST de 23 y 25 horas.
-- Hora inexistente rechazada; hora repetida identificada como dos instantes en el buscador.
-- Navegar días y mostrar el tablero en una zona distinta del host no cambia la fecha comercial.
+Los datos de Playwright son efímeros. Un test restaura las horas de demo después de una extensión; el test que cambia la tarifa la restaura incluso si falla. Cada test usa un proceso de Playwright y una ruta SQLite temporal independiente del archivo local `data/demo.sqlite`.
 
-### Acceso y dinero
+## Datos, correo y reportes
 
-- Sin sesión no se accede a la operación; recepción y administración respetan permisos distintos.
-- Producción inicia sin fixtures, tarifas ni horario de demo y no confirma correo sin proveedor configurado.
-- Pago informado y devolución externa conservan estados y auditoría; no activan integración de cobro.
+- El correo E2E se captura en `127.0.0.1:3002`; el servicio solo vive durante la ejecución.
+- La base de cada proceso de prueba se crea en el directorio temporal y se elimina en el teardown.
+- Los nombres y emails son sintéticos y usan `example.test` o `demo.local`.
+- Playwright conserva traza y captura solo ante un fallo; CI no publica ni despliega la aplicación.
+- Cobertura dirigida disponible: `pnpm exec vp run coverage:domain` mide dominio/tiempo y `pnpm exec vp run coverage:calendar` mide `calendar.ts`. La última medición registrada para dominio/tiempo fue 88.07% líneas, 81.76% ramas y 95.35% funciones; `calendar.ts` obtuvo 100% en las tres métricas. Volver a ejecutar los comandos para actualizar los valores.
+- No hay instrumentación unificada de cobertura HTTP y vistas, ni umbral global. Se priorizan ramas comerciales y de autorización para evitar que un porcentaje global premie pruebas superficiales.
 
-### Experiencia de recepción
+## Lógica de dominio, UX y arquitectura de pruebas
 
-- Inicio, día anterior/siguiente y fecha seleccionada corresponden al valor consultado en API.
-- El control de rango actualiza el zoom y el indicador visible.
-- Mouse y teclado activan solo el flujo de precarga; el guardado se valida otra vez en servidor.
-- La interfaz consume los límites horarios del tablero y no interpreta reglas semanales en paralelo.
-- El pedido de verificación mantiene nombre, correo y aceptación de condiciones después de redibujar el formulario.
-- La reserva de grupo atraviesa verificación, retención, aprobación humana y seguimiento privado; la reserva presencial atraviesa alta y check-in.
-- axe analiza los criterios WCAG 2.0/2.1/2.2 A y AA en la entrada pública y el tablero de recepción.
-- La página no desborda el ancho del viewport a 768 px y 1024 px; el calendario móvil conserva desplazamiento horizontal propio a 390 px.
+El dominio se prueba sin navegador y no debe importar UI, DOM, HTTP ni persistencia. La API valida de nuevo toda operación que compromete inventario dentro de la transacción; las validaciones del cliente solo guían la interacción. La lógica visual determinista (por ejemplo, rangos y zoom) vive en módulos puros comprobables, como `src/calendar.ts`. La UX de `src/main.ts` se prueba por recorrido en Playwright, sin replicar allí reglas de reserva, precio o capacidad.
 
-## Fixtures y aislamiento
+Para el mapa de componentes, fronteras, secuencias de reserva y plan de refactor incremental, ver [Diseño del sistema](../design/system-design.md). La API sigue siendo un monolito modular de un proceso; extraer casos de uso desde `server/index.mjs` o dividir vistas de `main.ts` se hará por flujo con pruebas de regresión antes de mover límites transaccionales.
 
-- Pruebas de dominio usan objetos inline pequeños con fecha fija.
-- Pruebas API crean un SQLite nuevo por proceso y lo eliminan en teardown.
-- Playwright establece su propio `DATABASE_PATH` en temporales; las cuentas y tarifas son demo y sus emails usan `.test`.
-- Playwright levanta un servicio local de correo falso en `127.0.0.1:3002`; ningún correo de prueba sale del equipo.
-- La semilla de demo de uso manual sigue en `apps/website/data/demo.sqlite`; ninguna prueba lee ni modifica esa base.
-- La API y el navegador se levantan localmente; no se conectan a correo productivo, pago, ni base remota.
+## Pendientes reales
 
-## Reglas para cambios
+La estrategia por capas y el pipeline local están implementados. La cobertura funcional no equivale a completar todos los requisitos del producto. Aún requieren nuevos casos de prueba —y en varios casos la función misma sigue pendiente—:
 
-- Corregir un bug incluye un caso que reproduce el fallo antes del fix.
-- Cambios al planificador o a pagos deben probar las transiciones relevantes, no solo el código HTTP 200.
-- Cambios a la UI que alteren una interacción de cliente o staff añaden prueba de unidad de estado/cálculo y, si el recorrido cruza la API, E2E.
-- Mantener los E2E en flujos críticos; la granularidad fina pertenece a unidad o integración.
-- No fijar un porcentaje global de cobertura sin medir la línea base. Priorizar ramas de autorización, horario, asignación, precio e idempotencia.
+- Modificaciones sensibles de reservas, límites/duplicados de canales manuales, excepciones de recepción y alertas de abuso.
+- Políticas de anticipo, ausencia, penalización tardía y demás reglas comerciales aún no definidas; ninguna debe inventarse para la suite.
+- Incidencia y falla de pista con reubicación supervisada, reservas parciales y conflictos detallados de extensión.
+- Auditoría de autorización más amplia y escenarios completos de permisos por rol.
+- Pruebas manuales con lector de pantalla y verificación visual en navegadores/dispositivos reales; axe no las reemplaza.
+- Smoke de una URL desplegada cuando se defina hosting y un entorno de preview con fixtures seguras.
+- Contratos versionados/OpenAPI si aparecen consumidores externos de la API; hoy las pruebas de integración fijan sus respuestas y códigos HTTP relevantes.
 
-## Reportes y fallos
+## Reglas de evolución
 
-Playwright conserva trazas y capturas solo ante fallos. Los resultados CI bloquean la promoción del cambio; no hay despliegue automático conectado. En una falla E2E, reproducir con `pnpm exec vp run website#e2e -- --headed` si el entorno tiene display, o inspeccionar la traza adjunta en CI.
-
-## Cobertura pendiente
-
-- Cobertura dirigida disponible: `pnpm exec vp run coverage:domain` mide el dominio y tiempo con `node:test`; `pnpm exec vp run coverage:calendar` mide el módulo puro de calendario con V8. La última medición fue 88.07% líneas, 81.76% ramas y 95.35% funciones para dominio/tiempo; `calendar.ts` quedó en 100% en las tres métricas. No es una cifra global de API y UI.
-- Aún no hay instrumentación unificada de cobertura de rutas HTTP y vistas ni umbral global; primero conviene cubrir las transiciones comerciales que faltan.
-- Cancelación, renovación del enlace y aceptación de precio en navegador; el pago sigue siendo manual.
-- Extensión y otras acciones de recepción que cambian una reserva.
-- axe solo cubre la entrada pública y el tablero inicial; faltan formularios, modales, solicitudes y más tamaños móviles.
-- Smoke autenticado de una URL de vista previa después de elegir proveedor de hosting.
+- Todo bug corregido incluye un caso que falla antes del fix.
+- Cambios del planificador o pagos prueban transiciones y resultados de dominio, además del estado HTTP.
+- Cambios de interacción que cruzan API incluyen E2E del flujo crítico; los cálculos deterministas permanecen en L1.
+- Añadir pruebas a nivel donde detectan el fallo con menor costo; no convertir cada combinación en E2E.
+- No probar únicamente el estado `200`: verificar inventario, autorización, estados comercial/financiero y auditabilidad pertinentes.
+- No fijar un umbral global de cobertura hasta instrumentar y revisar una línea base por módulo.

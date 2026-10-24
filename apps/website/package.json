@@ -13,6 +13,7 @@
     "coverage:calendar": "vp test run --coverage --coverage.include=src/calendar.ts src/calendar.test.ts",
     "e2e": "playwright test",
     "smoke": "playwright test --grep @smoke",
+    "smoke:preview": "vp run build && PLAYWRIGHT_PREVIEW=true playwright test --grep @smoke",
     "e2e:install": "playwright install chromium",
     "check": "vp check",
     "build": "tsc && vp build",
