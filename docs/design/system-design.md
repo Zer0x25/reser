@@ -90,7 +90,7 @@ La estrategia operativa está en [Testing strategy](../testing/strategy.md). La 
 
 1. **Unidad de dominio y tiempo:** calendario local, DST, reglas de capacidad, tarifas, agrupación y disponibilidad; escenarios sintéticos comparan la preservación de capacidad del motor con políticas simples para grupos de 4–72 personas.
 2. **Unidad de presentación:** cálculos puros del calendario que no requieren DOM.
-3. **Integración API:** SQLite aislado, autenticación, roles, idempotencia, concurrencia, pago manual y bloqueos.
+3. **Integración API:** SQLite aislado, autenticación, roles, idempotencia, concurrencia, pago manual, bloqueos y reorganización localizada con reserva fijada y rollback atómico.
 4. **E2E navegador:** verificación de correo local, aprobación de grupo, recotización y aceptación, renovación/cancelación, reserva presencial/check-in/extensión, calendario por teclado y móvil. axe cubre siete estados y el reflow se revisa en 320–428, 768 y 1024 px.
 5. **Smoke:** tres recorridos de entrada pública y calendario, en Vite de desarrollo y contra el artefacto compilado servido localmente por Node. No hay smoke de URL desplegada hasta configurar hosting.
 

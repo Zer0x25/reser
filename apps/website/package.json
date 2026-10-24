@@ -8,7 +8,7 @@
     "api": "node server/index.mjs",
     "test": "vp run test:unit && vp run test:integration",
     "test:unit": "node --test server/domain.test.mjs shared/time.test.mjs && vp test run src/calendar.test.ts",
-    "test:integration": "node --test server/api.test.mjs",
+    "test:integration": "node --test server/api.test.mjs server/reoptimization.test.mjs",
     "coverage:domain": "node --experimental-test-coverage --test server/domain.test.mjs shared/time.test.mjs",
     "coverage:calendar": "vp test run --coverage --coverage.include=src/calendar.ts src/calendar.test.ts",
     "e2e": "playwright test",

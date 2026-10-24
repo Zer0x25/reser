@@ -9,7 +9,7 @@ El MVP contiene reglas sensibles de disponibilidad, tarifas, autorización e inv
 
 ## Decisión
 
-- Mantener `node:test` para dominio y API; las pruebas API levantan el proceso real con SQLite temporal.
+- Mantener `node:test` para dominio y API; las pruebas API levantan el proceso real con SQLite temporal y cubren autenticación, concurrencia, reoptimización localizada, reservas fijadas y rollback.
 - Usar Vite+ Test/Vitest para cálculos puros de presentación como rangos y zoom del calendario.
 - Usar Playwright/Chromium para flujos E2E críticos: verificación de correo local, solicitud/aprobación, aceptación de precio, renovación/cancelación, reserva presencial/check-in/extensión, interacción por teclado y calendario móvil.
 - Ejecutar axe para criterios WCAG 2.0/2.1/2.2 A y AA en búsqueda, solicitud, tablero, bandeja, ficha modal, renovación y extensión. Comprobar reflow en 320–428 px y 768/1024 px.
