@@ -12,16 +12,24 @@ test("@smoke public booking entrypoint loads the OX brand and demo disclosure", 
   await expect(page.getByRole("button", { name: "Buscar horarios →" })).toBeVisible();
   await expect(page.getByText("Bowling Espacio OX").first()).toBeVisible();
   await expect(page.getByText("Entorno de demostración")).toBeVisible();
+  await expect(page.locator('.topbar [data-view="staff"]')).toHaveCount(0);
+  await expect(page.getByRole("link", { name: /recepción|administración/i })).toHaveCount(0);
 });
 
 test("@smoke reception can navigate the calendar, zoom it, and use a free lane", async ({
   page,
 }) => {
-  await page.goto("/");
-  await page.getByRole("button", { name: /Acceso del equipo/ }).click();
+  await page.goto("/admin");
+  await expect(page.getByText("PORTAL ADMINISTRADOR")).toBeVisible();
+  await page.goto("/recepcion");
   await page.locator('#login [name="email"]').fill("recepcion@demo.local");
   await page.locator('#login [name="password"]').fill("BowlingDemo2026!");
   await page.getByRole("button", { name: "Ingresar →" }).click();
+  await expect(page.getByRole("heading", { name: "Tablero de pistas" })).toBeVisible();
+
+  await page.goto("/admin");
+  await expect(page.getByRole("heading", { name: "Solo administración" })).toBeVisible();
+  await page.goto("/recepcion");
   await expect(page.getByRole("heading", { name: "Tablero de pistas" })).toBeVisible();
 
   const boardDate = page.locator('.calendar-date-picker input[name="board-date"]');
@@ -44,8 +52,7 @@ test("@smoke reception can navigate the calendar, zoom it, and use a free lane",
 
 test("@smoke @visual mobile reception can zoom and scroll the calendar", async ({ page }) => {
   await page.clock.install({ time: new Date("2026-10-24T15:00:00-03:00") });
-  await page.goto("/");
-  await page.getByRole("button", { name: /Acceso del equipo/ }).click();
+  await page.goto("/recepcion");
   await page.locator('#login [name="email"]').fill("recepcion@demo.local");
   await page.locator('#login [name="password"]').fill("BowlingDemo2026!");
   await page.getByRole("button", { name: "Ingresar →" }).click();

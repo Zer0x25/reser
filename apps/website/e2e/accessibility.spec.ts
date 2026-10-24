@@ -38,7 +38,7 @@ test("public booking and reception board meet automated WCAG checks", async ({ p
   const publicRequestForm = await new AxeBuilder({ page }).withTags(wcagTags).analyze();
   expect(violationSummary(publicRequestForm.violations)).toBe("");
 
-  await page.locator('.topbar nav [data-view="staff"]').click();
+  await page.goto("/recepcion");
   await page.locator('#login [name="email"]').fill("recepcion@demo.local");
   await page.locator('#login [name="password"]').fill("BowlingDemo2026!");
   await page.getByRole("button", { name: "Ingresar →" }).click();
@@ -63,7 +63,7 @@ test("public booking and reception board meet automated WCAG checks", async ({ p
 test("reception layout fits tablet and laptop viewports", async ({ page }) => {
   await page.setViewportSize({ width: 768, height: 1024 });
   await page.goto("/");
-  await page.locator('.topbar nav [data-view="staff"]').click();
+  await page.goto("/recepcion");
   await page.locator('#login [name="email"]').fill("recepcion@demo.local");
   await page.locator('#login [name="password"]').fill("BowlingDemo2026!");
   await page.getByRole("button", { name: "Ingresar →" }).click();

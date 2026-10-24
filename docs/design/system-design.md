@@ -2,7 +2,7 @@
 
 **Estado:** diseño actual del MVP, con límites de evolución
 **Fecha:** 2026-10-24
-**ADRs relacionados:** [0001 — stack y límites arquitectónicos](../decisions/0001-mvp-stack.md), [0002 — ciclo de reservas y datos de demo](../decisions/0002-reservation-and-demo-boundaries.md), [0003 — estrategia de pruebas](../decisions/0003-testing-strategy.md), [0004 — dominio, casos de uso y UX](../decisions/0004-domain-use-cases-and-ux.md)
+**ADRs relacionados:** [0001 — stack y límites arquitectónicos](../decisions/0001-mvp-stack.md), [0002 — ciclo de reservas y datos de demo](../decisions/0002-reservation-and-demo-boundaries.md), [0003 — estrategia de pruebas](../decisions/0003-testing-strategy.md), [0004 — dominio, casos de uso y UX](../decisions/0004-domain-use-cases-and-ux.md), [0005 — portales separados para el personal](../decisions/0005-separate-staff-portals.md)
 
 ## Objetivo y alcance
 
@@ -25,6 +25,8 @@ flowchart LR
 ```
 
 En desarrollo, Vite sirve la interfaz y reenvía `/api` al servidor. En producción, el proceso Node sirve la interfaz compilada y la API. El MVP soporta una sede, una base SQLite y un proceso API. Para varios procesos se necesita coordinación externa para la cola de correo y se debe revisar ADR 0001.
+
+La UI ofrece tres puntos de entrada: reservas públicas en `/`, recepción en `/recepcion` y administración en `/admin`. No hay un enlace desde el flujo público hacia los portales internos. Son rutas de interfaz; cada operación protegida sigue verificando sesión y rol en la API. Al montar la aplicación bajo un prefijo, las rutas internas conservan ese prefijo. Esta separación sigue [ADR 0005](../decisions/0005-separate-staff-portals.md).
 
 ## Responsabilidad por módulo
 
@@ -72,6 +74,7 @@ La recepción consulta el mismo inventario. Un clic o activación por teclado en
 
 - SQLite contiene pistas, reservas, solicitudes, asignaciones, bloqueos, pagos, sesiones, correos pendientes y auditoría.
 - Los navegadores reciben vistas de datos preparadas por la API; la autorización se verifica en servidor por rol.
+- La ruta `/admin` muestra la administración solo a sesiones con rol `admin`; una cuenta de recepción no carga sus datos. Las comprobaciones de la API siguen siendo obligatorias aunque la ruta de interfaz se conozca.
 - Las sesiones y enlaces se basan en tokens no predecibles. Los datos de cliente no se incluyen en logs salvo los mensajes de desarrollo previstos.
 - Las fixtures sintéticas se insertan una vez solo en modo demo, usan dominios `.test` y precios/hora de ejemplo. Las pruebas API y navegador usan una base temporal que se elimina al terminar.
 - Un pago informado no es acreditado; no existe una pasarela. La entrega productiva de correo requiere un proveedor y secretos configurados fuera de Git.

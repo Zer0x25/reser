@@ -23,6 +23,8 @@ Accesos locales:
 | Recepción      | `recepcion@demo.local` | `BowlingDemo2026!` |
 | Administración | `admin@demo.local`     | `BowlingDemo2026!` |
 
+El público reserva desde `/`; recepción entra directamente por `/recepcion` y administración por `/admin`. Los portales internos no se enlazan desde la web pública. `/admin` es una ruta de interfaz, no una medida de seguridad: las operaciones administrativas y los datos siguen protegidos por sesión y autorización de rol en la API.
+
 Son credenciales exclusivas de demostración. Los códigos de verificación y mensajes de correo de desarrollo aparecen en la terminal donde corre la API. La demo agrega reservas ficticias, una solicitud pendiente de aprobación, un pago informado sin acreditar y un bloqueo de mantenimiento; los correos usan dominios reservados `.test`. Los datos y precios son ejemplos y no autorizan cobros.
 
 ## Pruebas y verificación
@@ -38,7 +40,7 @@ pnpm exec vp run regression
 pnpm exec vp run simulate:engine
 ```
 
-`test:unit` y `test:integration` ejecutan cada capa por separado. `ready` suma formato, lint, tipos, toda la suite de unidad/integración y compilación. Usa `e2e:install` una vez para instalar Chromium. `smoke` corre tres verificaciones rápidas contra Vite; `smoke:preview` compila y corre las mismas tres contra el artefacto servido localmente por Node; `e2e` ejecuta trece pruebas, incluidos aprobación, aceptación de precio, renovación/cancelación, check-in/extensión, axe, búsqueda y selección interactiva de fechas/grupos, disponibilidad vacía y fallos de red, y reflow en nueve anchos. Cinco snapshots visuales cubren móvil, escritorio, resultados, solicitud y calendario móvil. `test:visual` ejecuta solo esas comparaciones de pantallas. Las pruebas generativas del dominio recorren los 4095 subconjuntos de pistas y verifican 5000 combinaciones seeded de inventario. `regression` corre `ready`, E2E y smoke compilado antes de integrar un cambio. Las pruebas de API y E2E usan bases SQLite temporales y no modifican el archivo de demostración. El correo de prueba se captura en un servicio local.
+`test:unit` y `test:integration` ejecutan cada capa por separado. `ready` suma formato, lint, tipos, toda la suite de unidad/integración y compilación. Usa `e2e:install` una vez para instalar Chromium. `smoke` corre tres verificaciones rápidas contra Vite; `smoke:preview` compila y corre las mismas tres contra el artefacto servido localmente por Node; `e2e` ejecuta trece pruebas, incluidos aprobación, aceptación de precio, renovación/cancelación, check-in/extensión, acceso admin por rol, axe, búsqueda y selección interactiva de fechas/grupos, disponibilidad vacía y fallos de red, y reflow en nueve anchos. Cinco snapshots visuales cubren móvil, escritorio, resultados, solicitud y calendario móvil. `test:visual` ejecuta solo esas comparaciones de pantallas. Las pruebas generativas del dominio recorren los 4095 subconjuntos de pistas y verifican 5000 combinaciones seeded de inventario. `regression` corre `ready`, E2E y smoke compilado antes de integrar un cambio. Las pruebas de API y E2E usan bases SQLite temporales y no modifican el archivo de demostración. El correo de prueba se captura en un servicio local.
 
 `simulate:engine` ejecuta una jornada sintética reproducible y compara la recomendación del motor con primera hora libre, hora más cercana y compactación simple. Reporta solicitudes aceptadas, horas-pista, ingreso ilustrativo, distancia horaria y capacidad residual por tamaño de demanda. No usa precios ni reservas reales.
 

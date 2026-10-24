@@ -32,6 +32,16 @@ type Option = {
 };
 type User = { id: string; email: string; name: string; role: "reception" | "admin" };
 const app = document.querySelector<HTMLDivElement>("#app")!;
+const routeMatch = (location.pathname.replace(/\/+$/, "") || "/").match(
+  /^(.*)\/(recepcion|admin|administracion)$/,
+);
+const appBasePath = routeMatch ? routeMatch[1] : location.pathname.replace(/\/+$/, "");
+const appPaths = {
+  public: appBasePath ? `${appBasePath}/` : "/",
+  reception: `${appBasePath}/recepcion`,
+  admin: `${appBasePath}/admin`,
+};
+const staffEntry = routeMatch ? (routeMatch[2] === "recepcion" ? "reception" : "admin") : null;
 const days = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
 function randomIdempotencyKey() {
   const cryptoApi = globalThis.crypto;
@@ -50,8 +60,9 @@ function randomIdempotencyKey() {
 }
 const state: any = {
   config: null,
-  view: "book",
-  page: "board",
+  view: staffEntry ? "staff" : "book",
+  staffEntry,
+  page: staffEntry === "admin" ? "settings" : "board",
   user: null,
   date: localDate(Date.now()),
   dateWindowStart: localDate(Date.now()),
@@ -162,7 +173,20 @@ function demo() {
 }
 function shell(content: string) {
   const venueName = esc(state.config?.venueName ?? "Bowling Espacio OX");
-  app.innerHTML = `<div class="shell"><header class="topbar"><a class="brand" data-action="nav" data-view="book"><span class="brand-mark" aria-hidden="true">OX</span><span><b>${venueName}</b><small>Bowling · Santiago</small></span></a><nav aria-label="Navegación principal"><button data-action="nav" data-view="book" class="${state.view === "book" ? "active" : ""}">Reservar</button><button data-action="nav" data-view="staff" class="${state.view === "staff" ? "active" : ""}">Recepción</button></nav><div class="top-end">${state.user ? `<span class="user-chip">${esc(state.user.name)} <button data-action="logout">Salir</button></span>` : `<button class="text-button" data-action="nav" data-view="staff">Acceso del equipo ↗</button>`}</div><button class="mobile-staff" data-action="nav" data-view="staff" aria-label="Acceso del equipo">Equipo ↗</button></header>${demo()}${notice()}<main>${content}</main><footer><span><b>${venueName}</b> · Santiago</span><span>Hora local de Chile · America/Santiago</span><span>© 2026</span></footer></div>${state.modal ? modalHtml() : ""}`;
+  const brand = `<span class="brand-mark" aria-hidden="true">OX</span><span><b>${venueName}</b><small>Bowling · Santiago</small></span>`;
+  const brandElement =
+    state.view === "staff"
+      ? `<div class="brand">${brand}</div>`
+      : `<a class="brand" href="${appPaths.public}" data-action="nav" data-view="book">${brand}</a>`;
+  const portalLabel =
+    state.view === "staff"
+      ? `<span class="portal-label">${state.staffEntry === "admin" ? "Administración" : "Portal del equipo"}</span>`
+      : "";
+  const userActions =
+    state.view === "staff" && state.user
+      ? `<div class="top-end"><span class="user-chip">${esc(state.user.name)} <button data-action="logout">Salir</button></span></div>`
+      : "";
+  app.innerHTML = `<div class="shell"><header class="topbar ${state.view === "staff" ? "staff-topbar" : ""}">${brandElement}${portalLabel}${userActions}</header>${demo()}${notice()}<main>${content}</main><footer><span><b>${venueName}</b> · Santiago</span><span>Hora local de Chile · America/Santiago</span><span>© 2026</span></footer></div>${state.modal ? modalHtml() : ""}`;
 }
 function renderBook() {
   if (state.manageToken) return renderManage();
@@ -181,7 +205,7 @@ function renderBook() {
   <section class="booking-card"><div class="booking-heading"><div><span class="eyebrow">01 · PLANIFICA TU VISITA</span><h2>¿Cuándo jugamos?</h2><p>Elige el día y cuéntanos cómo viene tu grupo.</p></div><div class="steps" aria-label="Pasos de la reserva"><b>1</b> Busca <i></i><b>2</b> Elige <i></i><b>3</b> Confirma</div></div>
   <form id="search" class="search-grid"><div class="date-picker-block"><div class="date-picker-heading"><span>Elige un día <small>${monthYear(state.date)}</small></span><label class="date-picker">＋ Otra fecha<input name="date" type="date" min="${today}" max="${maxDate}" value="${esc(state.date)}" required aria-label="Otra fecha"></label></div><div class="date-strip" role="group" aria-label="Próximos días"><button type="button" class="date-week-nav" data-action="date-week" data-direction="previous" aria-label="Ver semana anterior" ${windowStart <= today ? "disabled" : ""}>‹</button>${dateButtons}<button type="button" class="date-week-nav" data-action="date-week" data-direction="next" aria-label="Ver semana siguiente" ${windowStart >= lastDateWindowStart ? "disabled" : ""}>›</button></div></div><label>Hora preferida<input name="time" type="time" step="${(state.config?.startIntervalMinutes ?? 10) * 60}" value="${esc(state.time)}" required></label><label>Jugadores<div class="player-stepper"><button type="button" data-action="players-adjust" data-step="-1" aria-label="Quitar un jugador" ${state.players <= 1 ? "disabled" : ""}>−</button><input name="players" type="number" min="1" max="72" value="${state.players}" required aria-label="Cantidad de jugadores"><button type="button" data-action="players-adjust" data-step="1" aria-label="Agregar un jugador" ${state.players >= 72 ? "disabled" : ""}>＋</button></div></label><label>Tiempo de juego<select name="duration">${[60, 120, 180, 240].map((n) => `<option value="${n}" ${state.duration === n ? "selected" : ""}>${n / 60} ${n === 60 ? "hora" : "horas"}</option>`).join("")}</select></label><button class="button primary search-button" ${state.loading ? "disabled" : ""}>${state.loading ? "Buscando horarios…" : "Buscar horarios →"}</button>${state.players > 12 ? `<label class="check-row"><input name="separated" type="checkbox" ${state.separated ? "checked" : ""}> Acepto pistas separadas si no hay un grupo contiguo.</label>` : ""}</form>
   ${state.options.length ? renderOptions() : ""}${state.availabilitySearched && !state.options.length && !state.selected && !state.result ? renderEmptyAvailability() : ""}${state.selected ? renderRequestForm() : ""}${state.result ? renderResult() : ""}</section></section>
-  <section class="how"><div><span class="eyebrow">ASÍ DE FÁCIL</span><h2>Menos coordinar.<br><em>Más jugar.</em></h2></div><div class="how-cards"><article><b>01</b><span>⌕</span><h3>Busca</h3><p>Indica el día, hora ideal y tamaño del grupo.</p></article><article><b>02</b><span>◷</span><h3>Compara</h3><p>Revisa horarios y precios antes de decidir.</p></article><article><b>03</b><span>↗</span><h3>Confirma</h3><p>Verifica tu correo y sigue tu reserva con un enlace privado.</p></article></div></section><section class="venue-strip"><span>⌖</span><b>Nos encontramos en Santiago</b><small>La disponibilidad se muestra en hora local de Chile.</small><button data-action="nav" data-view="staff">¿Necesitas ayuda? Habla con recepción ↗</button></section>`;
+  <section class="how"><div><span class="eyebrow">ASÍ DE FÁCIL</span><h2>Menos coordinar.<br><em>Más jugar.</em></h2></div><div class="how-cards"><article><b>01</b><span>⌕</span><h3>Busca</h3><p>Indica el día, hora ideal y tamaño del grupo.</p></article><article><b>02</b><span>◷</span><h3>Compara</h3><p>Revisa horarios y precios antes de decidir.</p></article><article><b>03</b><span>↗</span><h3>Confirma</h3><p>Verifica tu correo y sigue tu reserva con un enlace privado.</p></article></div></section><section class="venue-strip"><span>⌖</span><b>Nos encontramos en Santiago</b><small>La disponibilidad se muestra en hora local de Chile.</small><span class="venue-help">¿Dudas? Nuestro equipo puede ayudarte en el local.</span></section>`;
   shell(content);
 }
 function renderOptions() {
@@ -229,11 +253,19 @@ function renderManage() {
   );
 }
 function renderLogin() {
-  return `<section class="login-page"><div class="login-side"><span class="eyebrow">ESPACIO OX · EQUIPO</span><h1>Todo listo<br>para que <em>ruede.</em></h1><p>Accede al tablero de pistas, solicitudes y operación del día.</p><div class="login-pins">●　●　●<br>　●　●　●</div></div><div class="login-form"><span class="eyebrow">ACCESO INTERNO</span><h2>Hola de nuevo</h2><p>Ingresa con tu cuenta individual.</p><form id="login"><label>Correo de trabajo<input name="email" type="email" autocomplete="username" required></label><label>Contraseña<input name="password" type="password" autocomplete="current-password" required></label><button class="button primary">Ingresar →</button></form><small>El acceso queda registrado en auditoría.</small></div></section>`;
+  const admin = state.staffEntry === "admin";
+  return `<section class="login-page"><div class="login-side"><span class="eyebrow">ESPACIO OX · ${admin ? "ADMINISTRACIÓN" : "RECEPCIÓN"}</span><h1>${admin ? "Control total.<br>" : "Todo listo<br>"}para que <em>ruede.</em></h1><p>${admin ? "Configura horarios, tarifas y permisos del sistema." : "Accede al tablero de pistas, solicitudes y operación del día."}</p><div class="login-pins">●　●　●<br>　●　●　●</div></div><div class="login-form"><span class="eyebrow">${admin ? "PORTAL ADMINISTRADOR" : "PORTAL DE RECEPCIÓN"}</span><h2>Hola de nuevo</h2><p>Ingresa con tu cuenta individual.</p><form id="login"><label>Correo de trabajo<input name="email" type="email" autocomplete="username" required></label><label>Contraseña<input name="password" type="password" autocomplete="current-password" required></label><button class="button primary">Ingresar →</button></form><small>Acceso protegido por cuenta y permisos.</small></div></section>`;
+}
+function renderAdminDenied() {
+  return `<section class="admin-denied"><span class="eyebrow">ACCESO RESTRINGIDO</span><h1>Solo administración</h1><p>Esta cuenta no tiene permisos para entrar al portal de administración.</p><button class="button outline" data-action="logout">Cerrar sesión</button></section>`;
 }
 function renderStaff() {
   if (!state.user) {
     shell(renderLogin());
+    return;
+  }
+  if (state.staffEntry === "admin" && state.user.role !== "admin") {
+    shell(renderAdminDenied());
     return;
   }
   if (state.page === "settings" && state.user.role !== "admin") state.page = "board";
@@ -494,7 +526,13 @@ async function init() {
   }
   render();
   if (state.manageToken) void loadManage();
-  if (state.user) void loadStaff();
+  if (state.user && state.view === "staff") {
+    if (state.staffEntry === "admin") {
+      if (state.user.role === "admin") void loadAdmin();
+    } else {
+      void loadStaff();
+    }
+  }
 }
 
 app.addEventListener("submit", async (event) => {
@@ -626,10 +664,15 @@ app.addEventListener("submit", async (event) => {
         method: "POST",
         body: JSON.stringify({ email: v("email"), password: v("password") }),
       });
+      if (state.staffEntry === "admin" && r.user.role !== "admin") {
+        await api("/api/auth/logout", { method: "POST" });
+        throw new Error("Esta dirección está disponible solo para cuentas administradoras.");
+      }
       state.user = r.user;
       state.view = "staff";
-      state.page = "board";
-      await loadStaff();
+      state.page = state.staffEntry === "admin" ? "settings" : "board";
+      if (state.page === "settings") await loadAdmin();
+      else await loadStaff();
       say("Sesión iniciada.", "success");
       render();
       return;
@@ -1017,11 +1060,15 @@ app.addEventListener("click", async (event) => {
       render();
     }
     if (action === "nav") {
-      state.view = target.dataset.view;
+      if (target.dataset.view === "staff") {
+        location.assign(appPaths.reception);
+        return;
+      }
+      state.view = "book";
+      state.staffEntry = null;
       state.manageToken = null;
-      history.replaceState({}, "", "/");
+      history.replaceState({}, "", appPaths.public);
       render();
-      if (state.user && state.view === "staff") await loadStaff();
     }
     if (action === "select") {
       state.selected = state.options.find(
@@ -1278,7 +1325,7 @@ app.addEventListener("click", async (event) => {
     if (action === "leave-manage") {
       state.manageToken = null;
       state.managed = null;
-      history.replaceState({}, "", "/");
+      history.replaceState({}, "", appPaths.public);
       state.view = "book";
       render();
     }

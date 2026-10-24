@@ -839,6 +839,13 @@ main {
   font-weight: 700;
   font-size: 11px;
 }
+.venue-strip > .venue-help {
+  grid-row: auto;
+  margin-left: auto;
+  color: var(--ox-burgundy);
+  font-size: 11px;
+  font-weight: 700;
+}
 footer {
   display: flex;
   justify-content: space-between;
@@ -1676,6 +1683,11 @@ footer b {
     margin: 8px 0 0;
     padding: 0;
     text-align: left;
+  }
+  .venue-strip > .venue-help {
+    grid-column: 2;
+    margin: 8px 0 0;
+    font-size: 9px;
   }
   .shell > footer {
     flex-wrap: wrap;
@@ -3080,5 +3092,62 @@ footer {
     animation: none;
     scroll-behavior: auto;
     transition: none;
+  }
+}
+.portal-label {
+  margin-left: auto;
+  color: #ffd7e1;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.staff-topbar .top-end {
+  margin-left: 18px;
+}
+.admin-denied {
+  max-width: 680px;
+  margin: 72px auto;
+  padding: clamp(24px, 5vw, 48px);
+  border: 1px solid #efd4dc;
+  border-radius: 20px;
+  background: #fff;
+  box-shadow: 0 18px 48px #3e25150d;
+}
+.admin-denied h1 {
+  margin-bottom: 12px;
+  font-size: clamp(2rem, 4vw, 3rem);
+}
+.admin-denied p {
+  margin-bottom: 22px;
+}
+@media (max-width: 700px) {
+  .topbar.staff-topbar {
+    height: auto;
+    min-height: 68px;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+  .topbar.staff-topbar .portal-label {
+    order: 3;
+    width: 100%;
+    margin-left: 45px;
+    font-size: 9px;
+  }
+  .topbar.staff-topbar .top-end {
+    display: block;
+    margin-left: auto;
+  }
+  .topbar.staff-topbar .user-chip {
+    font-size: 0;
+  }
+  .topbar.staff-topbar .user-chip button {
+    padding: 5px 0 5px 8px;
+    font-size: 11px;
+  }
+  .admin-denied {
+    margin: 28px auto;
   }
 }

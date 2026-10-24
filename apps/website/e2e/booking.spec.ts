@@ -79,7 +79,7 @@ test("customer verifies email, requests a booking, and sees reception approval",
     .getAttribute("href");
   expect(manageLink).toBeTruthy();
 
-  await page.locator('.topbar nav [data-view="staff"]').click();
+  await page.goto("/recepcion");
   await page.locator('#login [name="email"]').fill("recepcion@demo.local");
   await page.locator('#login [name="password"]').fill("BowlingDemo2026!");
   await page.getByRole("button", { name: "Ingresar →" }).click();
@@ -148,7 +148,7 @@ test("customer accepts the revised price after reception rechecks a request", as
     });
     expect(changeRate.ok()).toBe(true);
 
-    await page.locator('.topbar nav [data-view="staff"]').click();
+    await page.goto("/recepcion");
     await page.locator('#login [name="email"]').fill("recepcion@demo.local");
     await page.locator('#login [name="password"]').fill("BowlingDemo2026!");
     await page.getByRole("button", { name: "Ingresar →" }).click();
@@ -239,6 +239,16 @@ test("reception can create a walk-in booking and check it in from the board", as
   expect(adminLogin.ok()).toBe(true);
   const adminCookie = adminLogin.headers()["set-cookie"].split(";")[0];
   const authHeaders = { cookie: adminCookie, origin: "http://127.0.0.1:5173" };
+  await page.context().addCookies([
+    {
+      name: "bowling_session",
+      value: adminCookie.slice("bowling_session=".length),
+      url: "http://127.0.0.1:5173",
+    },
+  ]);
+  await page.goto("/admin");
+  await expect(page.getByRole("heading", { name: "Administración" })).toBeVisible();
+  await page.context().clearCookies();
   const settingsResponse = await request.get("/api/staff/settings", { headers: authHeaders });
   expect(settingsResponse.ok()).toBe(true);
   const originalSettings = await settingsResponse.json();
@@ -285,7 +295,7 @@ test("reception can create a walk-in booking and check it in from the board", as
 
   try {
     await page.goto("/");
-    await page.locator('.topbar nav [data-view="staff"]').click();
+    await page.goto("/recepcion");
     await page.locator('#login [name="email"]').fill("recepcion@demo.local");
     await page.locator('#login [name="password"]').fill("BowlingDemo2026!");
     await page.getByRole("button", { name: "Ingresar →" }).click();
@@ -307,7 +317,7 @@ test("reception can create a walk-in booking and check it in from the board", as
     expect(created.status(), JSON.stringify(createdBody)).toBe(201);
 
     await page.reload();
-    await page.locator('.topbar nav [data-view="staff"]').click();
+    await page.goto("/recepcion");
     await expect(page.getByRole("heading", { name: "Tablero de pistas" })).toBeVisible();
     const boardDate = page.locator('.calendar-date-picker input[name="board-date"]');
     if ((await boardDate.inputValue()) !== bookingDate) {
