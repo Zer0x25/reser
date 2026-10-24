@@ -12,6 +12,8 @@ dist
 dist-ssr
 *.local
 apps/website/data/
+apps/website/test-results/
+apps/website/playwright-report/
 
 # dotenv environment variable files
 .env

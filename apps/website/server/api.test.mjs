@@ -86,11 +86,12 @@ test("HTTP API authenticates staff and serializes competing claims on the final 
     { headers: { cookie } },
   );
   assert.equal(tomorrowBoard.status, 200);
+  const tomorrowData = await tomorrowBoard.json();
   assert.ok(
-    (await tomorrowBoard.json()).reservations.some(
-      (booking) => booking.customerName === "Valentina Soto · demo",
-    ),
+    tomorrowData.reservations.some((booking) => booking.customerName === "Valentina Soto · demo"),
   );
+  assert.equal(tomorrowData.operatingHours.isOpen, true);
+  assert.ok(tomorrowData.operatingHours.startMs < tomorrowData.operatingHours.endMs);
   const seededRequests = await fetch(`${base}/api/staff/requests`, { headers: { cookie } });
   assert.deepEqual(
     (await seededRequests.json()).requests.map((request) => request.name),
@@ -114,7 +115,13 @@ test("HTTP API authenticates staff and serializes competing claims on the final 
   });
   assert.equal(fallBackBoard.status, 200);
   const fallBackDay = await fallBackBoard.json();
-  assert.equal(fallBackDay.axisEndMs - fallBackDay.axisStartMs, 25 * 60 * 60_000);
+  assert.equal(fallBackDay.axisStartMs, localDateTimeToEpoch("2026-04-04T12:00"));
+  assert.equal(fallBackDay.axisEndMs, localDateTimeToEpoch("2026-04-05T01:00"));
+  assert.deepEqual(fallBackDay.operatingHours, {
+    isOpen: true,
+    startMs: fallBackDay.axisStartMs,
+    endMs: fallBackDay.axisEndMs,
+  });
   const deniedOutbox = await fetch(`${base}/api/staff/emails`, { headers: { cookie } });
   assert.equal(deniedOutbox.status, 403);
   const adminLogin = await fetch(`${base}/api/auth/login`, {
@@ -482,6 +489,17 @@ test("production starts closed and refuses email verification without a provider
     Object.values(config.weeklyHours).map((rule) => rule.closed),
     Array(7).fill(true),
   );
+  const productionLogin = await fetch(`${base}/api/auth/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: "admin@example.test", password: "ProductionAdminPass2026!" }),
+  });
+  assert.equal(productionLogin.status, 200);
+  const productionCookie = productionLogin.headers.get("set-cookie").split(";")[0];
+  const closedBoard = await fetch(`${base}/api/staff/board?date=2026-04-04`, {
+    headers: { cookie: productionCookie },
+  });
+  assert.equal((await closedBoard.json()).operatingHours.isOpen, false);
   const demoLogin = await fetch(`${base}/api/auth/login`, {
     method: "POST",
     headers: { "content-type": "application/json" },

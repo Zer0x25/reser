@@ -36,6 +36,9 @@ test("capacity and physical pairs are explicit", () => {
   assert.equal(minimumLanes(12), 2);
   assert.equal(minimumLanes(13), 3);
   assert.equal(minimumLanes(18), 3);
+  assert.throws(() => minimumLanes(0), /1 y 72/);
+  assert.throws(() => minimumLanes(73), /1 y 72/);
+  assert.deepEqual(laneSetsFor(4, 0), []);
   assert.deepEqual(
     laneSetsFor(7, 2, false).map((lanes) => lanes[0]),
     [1, 3, 5, 7, 9, 11],
@@ -54,6 +57,46 @@ test("capacity and physical pairs are explicit", () => {
     laneSetsFor(13, 3, true).some((lanes) => lanes.join(",") === "1,5,9"),
     true,
   );
+});
+
+test("lane and venue-wide maintenance blocks reject only the affected inventory", () => {
+  const startMs = localDateTimeToEpoch("2026-10-30T18:00");
+  const endMs = startMs + 60 * 60_000;
+  const isFree = (lanes, blocks) =>
+    isLaneSetFree({
+      lanes,
+      startMs,
+      endMs,
+      preparationMinutes: 0,
+      reservations: [],
+      blocks,
+    });
+  assert.equal(isFree([1], [{ laneId: 1, startMs, endMs }]), false);
+  assert.equal(isFree([2], [{ laneId: 1, startMs, endMs }]), true);
+  assert.equal(isFree([2], [{ laneId: null, startMs, endMs }]), false);
+});
+
+test("date exceptions override weekly hours and CLP half ties round upward", () => {
+  const date = "2026-10-30";
+  const startMs = localDateTimeToEpoch(`${date}T16:00`);
+  assert.equal(matchesHours(startMs, startMs + 60 * 60_000, hours), true);
+  assert.equal(
+    matchesHours(startMs, startMs + 60 * 60_000, hours, { [date]: { closed: true } }),
+    false,
+  );
+  assert.equal(
+    matchesHours(startMs, startMs + 60 * 60_000, hours, {
+      [date]: { open: "17:00", close: "23:00" },
+    }),
+    false,
+  );
+  const quote = calculateQuote({
+    startMs,
+    durationMinutes: 30,
+    laneCount: 1,
+    settings: { ...settings, generalRateClpPerLaneHour: 10001 },
+  });
+  assert.equal(quote.baseClp, 5001);
 });
 
 test("CLP quote prorates across tariff boundaries and chooses one promotion", () => {

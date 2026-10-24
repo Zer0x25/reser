@@ -1,119 +1,26 @@
-export const TIME_ZONE = "America/Santiago";
+import {
+  TIME_ZONE,
+  formatLocalDate,
+  formatLocalTime,
+  localDateTimeToEpoch,
+  parseLocalDay,
+  santiagoParts,
+  santiagoWeekday,
+} from "../shared/time.mjs";
+
+export {
+  TIME_ZONE,
+  formatLocalDate,
+  formatLocalTime,
+  localDateTimeToEpoch,
+  parseLocalDay,
+  santiagoParts,
+  santiagoWeekday,
+};
+
 export const LANE_COUNT = 12;
 export const MAX_PLAYERS_PER_LANE = 6;
 export const DEFAULT_PREPARATION_MINUTES = 10;
-
-const dateParts = new Intl.DateTimeFormat("en-CA", {
-  timeZone: TIME_ZONE,
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-  second: "2-digit",
-  hourCycle: "h23",
-});
-
-export function santiagoParts(epochMs) {
-  const parts = Object.fromEntries(
-    dateParts.formatToParts(new Date(epochMs)).map((part) => [part.type, part.value]),
-  );
-  return {
-    year: Number(parts.year),
-    month: Number(parts.month),
-    day: Number(parts.day),
-    hour: Number(parts.hour),
-    minute: Number(parts.minute),
-    second: Number(parts.second),
-  };
-}
-
-export function formatLocalDate(epochMs) {
-  const p = santiagoParts(epochMs);
-  return `${p.year}-${String(p.month).padStart(2, "0")}-${String(p.day).padStart(2, "0")}`;
-}
-
-export function formatLocalTime(epochMs) {
-  const p = santiagoParts(epochMs);
-  return `${String(p.hour).padStart(2, "0")}:${String(p.minute).padStart(2, "0")}`;
-}
-
-// Interpret a venue-local date and time without relying on the browser's timezone.
-// Nonexistent times at the spring DST jump are rejected; repeated times use the earlier instant.
-export function localDateTimeToEpoch(value) {
-  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);
-  if (!match) throw new Error("Fecha y hora inválidas.");
-  const [, ys, mos, ds, hs, mis] = match;
-  const wanted = {
-    year: Number(ys),
-    month: Number(mos),
-    day: Number(ds),
-    hour: Number(hs),
-    minute: Number(mis),
-    second: 0,
-  };
-  const utcGuess = Date.UTC(wanted.year, wanted.month - 1, wanted.day, wanted.hour, wanted.minute);
-  let candidate = utcGuess;
-  for (let i = 0; i < 4; i += 1) {
-    const got = santiagoParts(candidate);
-    const represented = Date.UTC(
-      got.year,
-      got.month - 1,
-      got.day,
-      got.hour,
-      got.minute,
-      got.second,
-    );
-    const delta = utcGuess - represented;
-    if (delta === 0) break;
-    candidate += delta;
-  }
-  const got = santiagoParts(candidate);
-  if (
-    got.year !== wanted.year ||
-    got.month !== wanted.month ||
-    got.day !== wanted.day ||
-    got.hour !== wanted.hour ||
-    got.minute !== wanted.minute
-  ) {
-    throw new Error("Esa hora local no existe por el cambio de horario.");
-  }
-  const oneHourEarlier = candidate - 60 * 60_000;
-  const early = santiagoParts(oneHourEarlier);
-  if (
-    early.year === wanted.year &&
-    early.month === wanted.month &&
-    early.day === wanted.day &&
-    early.hour === wanted.hour &&
-    early.minute === wanted.minute
-  )
-    return oneHourEarlier;
-  return candidate;
-}
-
-export function santiagoWeekday(epochMs) {
-  const { year, month, day } = santiagoParts(epochMs);
-  return new Date(Date.UTC(year, month - 1, day)).getUTCDay();
-}
-
-export function parseLocalDay(date) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("Fecha inválida.");
-  const [y, m, d] = date.split("-").map(Number);
-  const next = new Date(Date.UTC(y, m - 1, d + 1));
-  const nextDate = `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, "0")}-${String(next.getUTCDate()).padStart(2, "0")}`;
-  const dayStart = (day) => {
-    for (let minute = 0; minute <= 180; minute += 1) {
-      const candidateTime = `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
-      try {
-        return localDateTimeToEpoch(`${day}T${candidateTime}`);
-      } catch {
-        /* skip a local time removed by the DST jump */
-      }
-    }
-    throw new Error("No se pudo resolver el inicio del día local.");
-  };
-  return { start: dayStart(date), end: dayStart(nextDate) };
-}
 
 export function minimumLanes(players) {
   if (!Number.isInteger(players) || players < 1 || players > 72)

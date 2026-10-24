@@ -1,4 +1,19 @@
 import "./style.css";
+import {
+  addCalendarDays,
+  calendarRanges,
+  calendarStartAtFraction,
+  isWithinOperatingHours,
+  shiftCalendarRange,
+  visibleCalendarRange,
+  zoomForCalendarRange,
+} from "./calendar";
+import {
+  formatLocalDate as localDate,
+  formatLocalDateTime as localDateTime,
+  formatLocalTime as time,
+  localDateTimeToEpoch as localEpoch,
+} from "../shared/time.mjs";
 
 type Option = {
   startAt: string;
@@ -33,12 +48,6 @@ function randomIdempotencyKey() {
   const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
-const calendarRanges = [
-  { value: "total", label: "Total", hours: null },
-  { value: "8", label: "8 h", hours: 8 },
-  { value: "6", label: "6 h", hours: 6 },
-  { value: "4", label: "4 h", hours: 4 },
-] as const;
 const state: any = {
   config: null,
   view: "book",
@@ -76,55 +85,6 @@ const state: any = {
   manualStartAt: null as string | null,
   manualStartMs: null as number | null,
 };
-function localParts(epoch: number) {
-  return Object.fromEntries(
-    new Intl.DateTimeFormat("en-CA", {
-      timeZone: "America/Santiago",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      hourCycle: "h23",
-    })
-      .formatToParts(new Date(epoch))
-      .map((p) => [p.type, p.value]),
-  );
-}
-function localDate(epoch: number) {
-  const p = localParts(epoch);
-  return `${p.year}-${p.month}-${p.day}`;
-}
-function localDateTime(epoch: number) {
-  const p = localParts(epoch);
-  return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`;
-}
-function canStartOn(date: string, clock: string) {
-  const [year, month, day] = date.split("-").map(Number);
-  const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
-  const rule = state.config?.exceptions?.[date] ?? state.config?.weeklyHours?.[`${weekday}`];
-  if (!rule) return true;
-  if (rule.closed || !rule.open || !rule.close) return false;
-  return rule.close > rule.open ? clock >= rule.open && clock < rule.close : clock >= rule.open;
-}
-function addLocalDays(date: string, days: number) {
-  const [year, month, day] = date.split("-").map(Number);
-  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
-}
-function localEpoch(value: string) {
-  const m = /^(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d)$/.exec(value);
-  if (!m) throw new Error("Fecha y hora inválidas.");
-  const desired = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
-  let guess = desired;
-  for (let i = 0; i < 4; i++) {
-    const p = localParts(guess);
-    const represented = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute);
-    const delta = desired - represented;
-    guess += delta;
-    if (!delta) break;
-  }
-  return guess;
-}
 function esc(x: string | number | boolean | null | undefined) {
   return String(x ?? "").replace(
     /[&<>"']/g,
@@ -140,14 +100,6 @@ function money(n: number) {
     currency: "CLP",
     maximumFractionDigits: 0,
   }).format(n);
-}
-function time(epoch: number) {
-  return new Intl.DateTimeFormat("es-CL", {
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZone: "America/Santiago",
-    hourCycle: "h23",
-  }).format(new Date(epoch));
 }
 function dateText(date: string) {
   return new Intl.DateTimeFormat("es-CL", { dateStyle: "full", timeZone: "UTC" }).format(
@@ -189,7 +141,7 @@ function shell(content: string) {
 }
 function renderBook() {
   if (state.manageToken) return renderManage();
-  const maxDate = addLocalDays(localDate(Date.now()), state.config?.maximumAdvanceDays ?? 60);
+  const maxDate = addCalendarDays(localDate(Date.now()), state.config?.maximumAdvanceDays ?? 60);
   const content = `<section class="hero"><div class="hero-copy"><span class="eyebrow">✳ RESERVAS EN TIEMPO REAL</span><h1>Una buena noche<br>se arma <em>en equipo.</em></h1><p>Elige tu horario, encuentra el mejor espacio para tu grupo y deja el resto en nuestras manos.</p><div class="hero-facts"><span><b>12</b> pistas</span><span><b>6</b> jugadores por pista</span><span><b>${state.config?.preparationMinutes ?? 10} min</b> entre grupos</span></div></div><div class="hero-visual" aria-label="Pistas de bowling"><span class="glow"></span><div class="pin pin-a"></div><div class="pin pin-b"></div><div class="pin pin-c"></div><div class="ball"><i></i><i></i><i></i></div><div class="art-caption"><span>● EN VIVO</span><b>La pista que<br>se adapta a ustedes</b></div></div></section>
   <section class="booking-card"><div class="section-heading"><div><span class="eyebrow">ENCUENTRA TU HORARIO</span><h2>¿Cuándo jugamos?</h2><p>Comparamos todas las pistas para ofrecerte alternativas útiles.</p></div><div class="steps"><b>01</b> Buscar <i></i><b>02</b> Elegir <i></i><b>03</b> Confirmar</div></div>
   <form id="search" class="search-grid"><label>Fecha<input name="date" type="date" min="${localDate(Date.now())}" max="${maxDate}" value="${esc(state.date)}" required></label><label>Hora preferida<input name="time" type="time" step="${(state.config?.startIntervalMinutes ?? 10) * 60}" value="${esc(state.time)}" required></label><label>Jugadores<input name="players" type="number" min="1" max="72" value="${state.players}" required></label><label>Tiempo de juego<select name="duration">${[60, 120, 180, 240].map((n) => `<option value="${n}" ${state.duration === n ? "selected" : ""}>${n / 60} ${n === 60 ? "hora" : "horas"}</option>`).join("")}</select></label><button class="button primary search-button" ${state.loading ? "disabled" : ""}>${state.loading ? "Buscando…" : "Buscar horarios →"}</button>${state.players > 12 ? `<label class="check-row"><input name="separated" type="checkbox" ${state.separated ? "checked" : ""}> Acepto pistas separadas si no hay un grupo contiguo.</label>` : ""}</form>
@@ -422,19 +374,11 @@ function updateCalendarControls() {
   const axisTrack = document.querySelector<HTMLElement>(".calendar-axis-viewport .hour-track");
   if (axisTrack) axisTrack.style.transform = `translateX(${-scroller.scrollLeft}px)`;
   const zoom = state.calendarZoomPx ?? state.board.calendarHourWidthPx ?? 60;
-  let selectedRange: (typeof calendarRanges)[number] = calendarRanges[0];
-  if (state.calendarZoomCustomized) {
-    const visibleHours = scroller.clientWidth / zoom;
-    selectedRange = calendarRanges[1];
-    for (const range of calendarRanges.slice(2)) {
-      if (
-        Math.abs(visibleHours - Number(range.hours)) <
-        Math.abs(visibleHours - Number(selectedRange.hours))
-      ) {
-        selectedRange = range;
-      }
-    }
-  }
+  const selectedRange = visibleCalendarRange(
+    zoom,
+    scroller.clientWidth,
+    state.calendarZoomCustomized,
+  );
   state.calendarRange = selectedRange.value;
   const rangeButton = document.querySelector<HTMLButtonElement>(".calendar-range-button");
   if (rangeButton) {
@@ -855,10 +799,9 @@ app.addEventListener("click", async (event) => {
         event.detail === 0
           ? 0.5
           : Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width));
-      const offset = Math.round(((end - start) * fraction) / intervalMs) * intervalMs;
-      const startMs = Math.max(start, Math.min(end - intervalMs, start + offset));
+      const startMs = calendarStartAtFraction(start, end, intervalMs, fraction);
       const date = target.dataset.date!;
-      if (!canStartOn(date, time(startMs))) {
+      if (!isWithinOperatingHours(startMs, state.board.operatingHours)) {
         say("Ese intervalo está fuera del horario de atención.", "info");
         render();
         return;
@@ -884,28 +827,25 @@ app.addEventListener("click", async (event) => {
       const date =
         action === "board-today"
           ? localDate(Date.now())
-          : addLocalDays(state.board.date, Number(target.dataset.days));
+          : addCalendarDays(state.board.date, Number(target.dataset.days));
       await loadStaff(date);
       return;
     }
     if (action === "calendar-range-cycle" || action === "calendar-range-step") {
       const scroller = document.querySelector<HTMLElement>(".board-scroll");
       if (!scroller) return;
-      const currentIndex = calendarRanges.findIndex((range) => range.value === state.calendarRange);
       const step =
         action === "calendar-range-cycle" || target.dataset.direction === "next" ? 1 : -1;
-      const nextIndex = (currentIndex + step + calendarRanges.length) % calendarRanges.length;
-      const range = calendarRanges[nextIndex];
+      const range = shiftCalendarRange(state.calendarRange, step);
       const oldZoom = state.calendarZoomPx ?? state.board.calendarHourWidthPx ?? 60;
       const viewportWidth = scroller.clientWidth;
       const durationHours = (state.board.axisEndMs - state.board.axisStartMs) / 3_600_000;
-      const newZoom =
-        range.value === "total"
-          ? Math.max(
-              12,
-              Math.min(state.board.calendarHourWidthPx ?? 60, viewportWidth / durationHours),
-            )
-          : Math.max(12, Math.min(300, viewportWidth / Number(range.hours)));
+      const newZoom = zoomForCalendarRange(
+        range,
+        viewportWidth,
+        durationHours,
+        state.board.calendarHourWidthPx ?? 60,
+      );
       const centerScrollLeft = scroller.scrollLeft;
       state.calendarZoomPx = newZoom;
       state.calendarZoomCustomized = range.value !== "total";

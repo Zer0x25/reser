@@ -5,6 +5,12 @@
   "type": "module",
   "scripts": {
     "ready": "vp check && vp run -r test && vp run -r build",
+    "test:unit": "vp run website#test:unit && vp run utils#test",
+    "test:integration": "vp run website#test:integration",
+    "regression": "vp run ready && vp run e2e",
+    "e2e": "vp run website#e2e",
+    "e2e:install": "vp run website#e2e:install",
+    "smoke": "vp run website#smoke",
     "dev": "vp run website#dev",
     "prepare": "vp config"
   },

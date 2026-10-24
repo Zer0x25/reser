@@ -1082,12 +1082,16 @@ async function handleApi(req, res, url) {
     const hours = settings.exceptions?.[date] ?? settings.weeklyHours?.[String(weekday)];
     let axisStartMs = start;
     let axisEndMs = end;
+    let operatingHours = { isOpen: false, startMs: start, endMs: end };
     if (hours && !hours.closed && hours.open && hours.close) {
       try {
-        axisStartMs = localDateTimeToEpoch(`${date}T${hours.open}`);
-        axisEndMs = localDateTimeToEpoch(`${date}T${hours.close}`);
-        if (axisEndMs <= axisStartMs)
-          axisEndMs = localDateTimeToEpoch(`${formatLocalDate(end)}T${hours.close}`);
+        const openMs = localDateTimeToEpoch(`${date}T${hours.open}`);
+        let closeMs = localDateTimeToEpoch(`${date}T${hours.close}`);
+        if (closeMs <= openMs)
+          closeMs = localDateTimeToEpoch(`${formatLocalDate(end)}T${hours.close}`);
+        operatingHours = { isOpen: true, startMs: openMs, endMs: closeMs };
+        axisStartMs = openMs;
+        axisEndMs = closeMs;
       } catch {
         axisStartMs = start;
         axisEndMs = end;
@@ -1131,6 +1135,7 @@ async function handleApi(req, res, url) {
       date,
       axisStartMs,
       axisEndMs,
+      operatingHours,
       calendarHourWidthPx: settings.calendarHourWidthPx ?? 60,
       lanes: db.prepare("SELECT id,pair_id,x,y,active FROM lanes ORDER BY id").all(),
       reservations,

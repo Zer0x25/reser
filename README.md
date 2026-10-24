@@ -25,15 +25,19 @@ Accesos locales:
 
 Son credenciales exclusivas de demostración. Los códigos de verificación y mensajes de correo de desarrollo aparecen en la terminal donde corre la API. La demo agrega reservas ficticias, una solicitud pendiente de aprobación, un pago informado sin acreditar y un bloqueo de mantenimiento; los correos usan dominios reservados `.test`. Los datos y precios son ejemplos y no autorizan cobros.
 
-## Verificación
+## Pruebas y verificación
 
 ```bash
-pnpm --filter website test
-pnpm --filter website build
-pnpm run ready
+pnpm exec vp run ready
+pnpm exec vp run e2e:install
+pnpm exec vp run smoke
+pnpm exec vp run e2e
+pnpm exec vp run regression
 ```
 
-`ready` ejecuta la revisión del monorepo, las pruebas y la compilación. Las pruebas usan una base temporal y no modifican el archivo de demostración.
+`test:unit` y `test:integration` ejecutan cada capa por separado. `ready` suma formato, lint, tipos y compilación. Usa `e2e:install` una vez para instalar Chromium. `smoke` corre los dos flujos críticos de navegador; `e2e` ejecuta la suite E2E completa y `regression` corre todas las verificaciones antes de integrar un cambio. Las pruebas de API y E2E usan bases SQLite temporales y no modifican el archivo de demostración.
+
+La estrategia por niveles, escenarios críticos, aislamiento y pendientes está en [`docs/testing/strategy.md`](docs/testing/strategy.md). La arquitectura y límites entre UI, dominio, API y persistencia están en [`docs/design/system-design.md`](docs/design/system-design.md).
 
 ## Producción
 
@@ -100,8 +104,8 @@ La optimización utiliza una puntuación de escenarios de demanda y una búsqued
 - La ficha y el tablero no incluyen todos los indicadores históricos de ocupación, fragmentación, conversión e ingresos solicitados. Los indicadores presentes usan registros reales.
 - La forma física del salón comienza con la distribución supuesta 2 × 6; la administración todavía no edita coordenadas o adyacencias.
 - La cola de correo reintenta cada 30 segundos mientras el proceso está activo. Para varios procesos API se debe añadir coordinación de trabajadores antes del despliegue horizontal.
-- Los recorridos se validan en pruebas de dominio y API; todavía no hay una suite automatizada de extremo a extremo que opere el navegador.
+- La suite E2E de navegador cubre la entrada pública y recepción con navegación, zoom, teclado y desplazamiento móvil a 390 px. Aún faltan recorridos E2E de solicitud web, aprobación, check-in y más tamaños móviles.
 
 La especificación inicial completa se conserva en [`docs/product/initial-one-shot-implementation-prompt.md`](docs/product/initial-one-shot-implementation-prompt.md). Este README describe el estado actual y sus límites; el prompt define el alcance funcional objetivo.
 
-Decisiones aceptadas: [ADR 0001 — stack y límites arquitectónicos](docs/decisions/0001-mvp-stack.md) y [ADR 0002 — ciclo de reservas, pagos y límites de demo](docs/decisions/0002-reservation-and-demo-boundaries.md).
+Decisiones aceptadas: [ADR 0001 — stack y límites arquitectónicos](docs/decisions/0001-mvp-stack.md), [ADR 0002 — ciclo de reservas, pagos y límites de demo](docs/decisions/0002-reservation-and-demo-boundaries.md) y [ADR 0003 — estrategia de pruebas](docs/decisions/0003-testing-strategy.md).
