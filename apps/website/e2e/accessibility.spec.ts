@@ -22,6 +22,8 @@ function violationSummary(violations: Awaited<ReturnType<AxeBuilder["analyze"]>>
 }
 
 test("public booking and reception board meet automated WCAG checks", async ({ page }) => {
+  // This single scenario runs five serial Axe scans across different UI states.
+  test.setTimeout(60_000);
   await page.goto("/");
   const publicPage = await new AxeBuilder({ page }).withTags(wcagTags).analyze();
   expect(violationSummary(publicPage.violations)).toBe("");

@@ -59,6 +59,8 @@ const state: any = {
   duration: 60,
   separated: false,
   options: [] as Option[],
+  loading: false,
+  availabilitySearched: false,
   selected: null as Option | null,
   requestName: "",
   requestEmail: "",
@@ -116,11 +118,18 @@ function errorMessage(e: unknown) {
 async function api<T = any>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.body && !headers.has("content-type")) headers.set("content-type", "application/json");
-  const response = await fetch(path, {
-    credentials: "same-origin",
-    ...init,
-    headers,
-  });
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      credentials: "same-origin",
+      ...init,
+      headers,
+    });
+  } catch {
+    throw new Error(
+      "No pudimos conectar con el servicio. Revisa tu conexión e inténtalo otra vez.",
+    );
+  }
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body.error ?? "Ocurrió un error.");
   return body as T;
@@ -131,7 +140,7 @@ function say(text: string, kind = "info") {
 }
 function notice() {
   return state.message
-    ? `<div class="notice ${state.kind}" role="status">${esc(state.message)}<button data-action="clear">×</button></div>`
+    ? `<div class="notice ${state.kind}" role="status" tabindex="-1">${esc(state.message)}<button data-action="clear" aria-label="Cerrar aviso">×</button></div>`
     : "";
 }
 function demo() {
@@ -149,7 +158,7 @@ function renderBook() {
   const content = `<section class="hero"><div class="hero-copy"><span class="eyebrow">✳ RESERVAS EN TIEMPO REAL</span><h1>Una buena noche<br>se arma <em>en equipo.</em></h1><p>Elige tu horario, encuentra el mejor espacio para tu grupo y deja el resto en nuestras manos.</p><div class="hero-facts"><span><b>12</b> pistas</span><span><b>6</b> jugadores por pista</span><span><b>${state.config?.preparationMinutes ?? 10} min</b> entre grupos</span></div></div><div class="hero-visual" aria-label="Pistas de bowling"><span class="glow"></span><div class="pin pin-a"></div><div class="pin pin-b"></div><div class="pin pin-c"></div><div class="ball"><i></i><i></i><i></i></div><div class="art-caption"><span>● EN VIVO</span><b>La pista que<br>se adapta a ustedes</b></div></div></section>
   <section class="booking-card"><div class="section-heading"><div><span class="eyebrow">ENCUENTRA TU HORARIO</span><h2>¿Cuándo jugamos?</h2><p>Comparamos todas las pistas para ofrecerte alternativas útiles.</p></div><div class="steps"><b>01</b> Buscar <i></i><b>02</b> Elegir <i></i><b>03</b> Confirmar</div></div>
   <form id="search" class="search-grid"><label>Fecha<input name="date" type="date" min="${localDate(Date.now())}" max="${maxDate}" value="${esc(state.date)}" required></label><label>Hora preferida<input name="time" type="time" step="${(state.config?.startIntervalMinutes ?? 10) * 60}" value="${esc(state.time)}" required></label><label>Jugadores<input name="players" type="number" min="1" max="72" value="${state.players}" required></label><label>Tiempo de juego<select name="duration">${[60, 120, 180, 240].map((n) => `<option value="${n}" ${state.duration === n ? "selected" : ""}>${n / 60} ${n === 60 ? "hora" : "horas"}</option>`).join("")}</select></label><button class="button primary search-button" ${state.loading ? "disabled" : ""}>${state.loading ? "Buscando…" : "Buscar horarios →"}</button>${state.players > 12 ? `<label class="check-row"><input name="separated" type="checkbox" ${state.separated ? "checked" : ""}> Acepto pistas separadas si no hay un grupo contiguo.</label>` : ""}</form>
-  ${state.options.length ? renderOptions() : ""}${state.selected ? renderRequestForm() : ""}${state.result ? renderResult() : ""}</section>
+  ${state.options.length ? renderOptions() : ""}${state.availabilitySearched && !state.selected && !state.result ? renderEmptyAvailability() : ""}${state.selected ? renderRequestForm() : ""}${state.result ? renderResult() : ""}</section>
   <section class="how"><div><span class="eyebrow">ASÍ DE FÁCIL</span><h2>Menos coordinar.<br><em>Más jugar.</em></h2></div><div class="how-cards"><article><b>01</b><span>⌕</span><h3>Busca</h3><p>Indica el día, hora ideal y tamaño del grupo.</p></article><article><b>02</b><span>◷</span><h3>Compara</h3><p>Revisa horarios y precios antes de decidir.</p></article><article><b>03</b><span>↗</span><h3>Confirma</h3><p>Verifica tu correo y sigue tu reserva con un enlace privado.</p></article></div></section><section class="venue-strip"><span>⌖</span><b>Nos encontramos en Santiago</b><small>La disponibilidad se muestra en hora local de Chile.</small><button data-action="nav" data-view="staff">¿Necesitas ayuda? Habla con recepción ↗</button></section>`;
   shell(content);
 }
@@ -173,6 +182,9 @@ function renderOptions() {
       return `<article class="option-card ${chosen ? "chosen" : ""}"><div class="option-time"><b>${esc(o.startTime)}</b><small>${esc(o.endTime)} término</small>${repeatedTimes.has(o.startTime) && o.utcOffset ? `<small>${esc(o.utcOffset)}</small>` : ""}</div><div class="option-info"><div><span class="tag ${o.recommended ? "green" : ""}">${o.recommended ? "Mejor conservación" : tag}</span><span class="tag">${o.laneCount} ${o.laneCount === 1 ? "pista" : "pistas"} ${o.grouped ? "juntas" : "separadas"}</span></div><p>${o.minimumLanes === 1 ? "Una pista para tu grupo" : `${o.laneCount} contratadas · ${o.minimumLanes} necesarias por capacidad`}${o.grouped ? "" : " · cada parte juega por separado"}</p>${o.quote.promotionName ? `<small class="promo">${esc(o.quote.promotionName)} aplicado</small>` : ""}</div><div class="option-price"><b>${state.config?.rateConfigured || state.config?.demoMode ? money(o.quote.totalClp) : "Tarifa por configurar"}</b><small>total · ${o.laneCount} ${o.laneCount === 1 ? "pista" : "pistas"}</small></div><button class="button ${chosen ? "chosen-button" : "outline"}" data-action="select" data-start="${o.startMs}">${chosen ? "Elegido ✓" : "Elegir"}</button></article>`;
     })
     .join("")}</section>`;
+}
+function renderEmptyAvailability() {
+  return `<section class="empty availability-empty" tabindex="-1"><b aria-hidden="true">◷</b><h3>No encontramos horarios</h3><p>Prueba con otra hora, fecha o duración. Si son un grupo grande, aceptar pistas separadas puede mostrar más alternativas.</p></section>`;
 }
 function renderRequestForm() {
   const o: Option = state.selected;
@@ -480,6 +492,10 @@ app.addEventListener("submit", async (event) => {
       state.selected = null;
       state.result = null;
       state.proof = "";
+      state.options = [];
+      state.loading = true;
+      state.availabilitySearched = false;
+      render();
       const q = new URLSearchParams({
         date: state.date,
         time: state.time,
@@ -489,14 +505,18 @@ app.addEventListener("submit", async (event) => {
       });
       const result = await api<any>(`/api/availability?${q}`);
       state.options = result.alternatives;
-      say(
-        state.options.length
-          ? `${state.options.length} alternativas disponibles. Elige la que prefieres.`
-          : "No encontramos opciones con estas condiciones. Prueba otra duración o una agrupación separada.",
-        state.options.length ? "success" : "info",
-      );
+      state.loading = false;
+      state.availabilitySearched = true;
+      if (state.options.length)
+        say(`${state.options.length} alternativas disponibles. Elige la que prefieres.`, "success");
       render();
-      document.querySelector(".options")?.scrollIntoView({ behavior: "smooth" });
+      const results = document.querySelector<HTMLElement>(".options, .availability-empty");
+      results?.scrollIntoView({ behavior: "smooth" });
+      if (state.options.length)
+        document.querySelector<HTMLButtonElement>('.option-card [data-action="select"]')?.focus({
+          preventScroll: true,
+        });
+      else results?.focus({ preventScroll: true });
       return;
     }
     if (form.id === "request") {
@@ -779,8 +799,10 @@ app.addEventListener("submit", async (event) => {
       return;
     }
   } catch (e) {
+    state.loading = false;
     say(errorMessage(e), "error");
     render();
+    document.querySelector<HTMLElement>(".notice")?.focus({ preventScroll: true });
   }
 });
 app.addEventListener("input", (event) => {
