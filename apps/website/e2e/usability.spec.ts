@@ -25,7 +25,7 @@ test("mobile customer can search and choose a booking without tiny text or lost 
     await route.continue();
   });
   await search.click();
-  await expect(search).toHaveText("Buscando…");
+  await expect(search).toHaveText("Buscando horarios…");
   await expect(search).toBeDisabled();
 
   const firstOption = page.locator(".option-card").first();
@@ -61,6 +61,36 @@ test("mobile customer can search and choose a booking without tiny text or lost 
   await page.setViewportSize({ width: 320, height: 740 });
   await page.keyboard.press("Enter");
   await expect(page.locator('#request [name="name"]')).toBeFocused();
+});
+
+test("customer can move through the date strip and adjust the group size", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  const date = page.locator('#search [name="date"]');
+  const firstDate = await date.inputValue();
+  const nextWeekDate = addDays(firstDate, 7);
+  const nextWeek = page.locator('[data-action="date-week"][data-direction="next"]');
+  const players = page.locator('#search [name="players"]');
+
+  await expect(
+    page.locator(`[data-action="date-select"][data-date="${firstDate}"]`),
+  ).toHaveAttribute("aria-pressed", "true");
+  await page.locator('[data-action="players-adjust"][data-step="1"]').click();
+  await expect(players).toHaveValue("5");
+  await expect(page.locator('[data-action="players-adjust"][data-step="1"]')).toBeFocused();
+
+  await nextWeek.click();
+  await expect(date).toHaveValue(nextWeekDate);
+  await expect(
+    page.locator(`[data-action="date-select"][data-date="${nextWeekDate}"]`),
+  ).toHaveAttribute("aria-pressed", "true");
+
+  const twoDaysLater = addDays(nextWeekDate, 2);
+  await page.locator(`[data-action="date-select"][data-date="${twoDaysLater}"]`).click();
+  await expect(date).toHaveValue(twoDaysLater);
+  await expect(
+    page.locator(`[data-action="date-select"][data-date="${twoDaysLater}"]`),
+  ).toHaveAttribute("aria-pressed", "true");
 });
 
 test("simulated availability handles empty results, connection failure, and retry", async ({

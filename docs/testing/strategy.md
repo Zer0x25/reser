@@ -20,7 +20,7 @@ Probar reglas comerciales y concurrencia cerca de su implementación, y simular 
 `pnpm exec vp run regression` ejecuta, en este orden:
 
 1. `ready`: `vp check`, pruebas de unidad e integración del workspace y build.
-2. `e2e`: las doce pruebas de navegador completas.
+2. `e2e`: las trece pruebas de navegador completas.
 3. `smoke:preview`: vuelve a compilar el sitio y ejecuta las tres pruebas smoke contra los archivos compilados servidos por el proceso Node local en el puerto 3001.
 
 El workflow de GitHub corre `regression` en cada push y pull request e instala Chromium. El smoke de vista previa valida el artefacto compilado en un entorno local aislado; no es una prueba contra un hosting ni un despliegue real, que aún no está configurado. `smoke` sigue disponible para una verificación corta sobre Vite en desarrollo.
@@ -34,8 +34,8 @@ El workflow de GitHub corre `regression` en cada push y pull request e instala C
 - **API e inventario:** autenticación/roles, SQLite, escrituras repetidas, solicitudes que compiten por la última capacidad, seguimiento y operaciones manuales.
 - **Reoptimización por API:** dos asignaciones flexibles se reorganizan; una reserva fijada conserva su pista; la decisión queda auditada. Un bloqueo que hace imposible la reorganización fuerza un `409` y la prueba confirma que las asignaciones previas se restauran y no quedan eventos parciales de auditoría.
 - **Cliente web:** verificación local de correo, solicitud de tres o más pistas, aprobación humana, recotización y aceptación del nuevo importe, renovación de enlace vencido y cancelación elegible.
-- **Usabilidad simulada:** Playwright recorre búsqueda lenta, selección por teclado, estado sin horarios, error de red, reintento y envío exitoso. El flujo público se comprueba a 320, 360, 375, 390, 414, 428, 768, 1024 y 1280 px; valida legibilidad y ausencia de desborde horizontal.
-- **Regresión visual:** cuatro imágenes comparan la entrada pública móvil, alternativas, formulario seleccionado y controles móviles del calendario. Se ejecutan con la versión de Chromium fijada por Playwright y un reloj de navegador congelado.
+- **Usabilidad simulada:** Playwright recorre búsqueda lenta, selección por teclado, navegación de semana, selección de fecha, ajuste del grupo, estado sin horarios, error de red, reintento y envío exitoso. El flujo público se comprueba a 320, 360, 375, 390, 414, 428, 768, 1024 y 1280 px; valida legibilidad y ausencia de desborde horizontal.
+- **Regresión visual:** cinco imágenes comparan la entrada pública móvil y escritorio, alternativas, formulario seleccionado y controles móviles del calendario. Se ejecutan con la versión de Chromium fijada por Playwright y un reloj de navegador congelado.
 - **Recepción:** alta presencial, check-in y extensión autorizada de una reserva ocupada, verificando el nuevo término.
 - **Accesibilidad:** axe revisa búsqueda pública, formulario de solicitud, tablero, bandeja, ficha modal, renovación y extensión. Los tests de axe se ejecutan con tags WCAG 2.0/2.1/2.2 A/AA.
 - **Reflow:** el documento no puede exceder el viewport de 320, 360, 375, 390, 414, 428, 768 ni 1024 px. El eje de horas del calendario puede desplazarse dentro de su contenedor horizontal propio.

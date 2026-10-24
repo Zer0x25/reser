@@ -54,6 +54,7 @@ const state: any = {
   page: "board",
   user: null,
   date: localDate(Date.now()),
+  dateWindowStart: localDate(Date.now()),
   time: "18:00",
   players: 4,
   duration: 60,
@@ -112,6 +113,17 @@ function dateText(date: string) {
     new Date(`${date}T12:00:00Z`),
   );
 }
+function shortWeekday(date: string) {
+  return new Intl.DateTimeFormat("es-CL", { weekday: "short", timeZone: "UTC" })
+    .format(new Date(`${date}T12:00:00Z`))
+    .replace(".", "")
+    .toLocaleUpperCase("es-CL");
+}
+function monthYear(date: string) {
+  return new Intl.DateTimeFormat("es-CL", { month: "long", year: "numeric", timeZone: "UTC" })
+    .format(new Date(`${date}T12:00:00Z`))
+    .toLocaleUpperCase("es-CL");
+}
 function errorMessage(e: unknown) {
   return e instanceof Error ? e.message : "No pudimos completar la acción.";
 }
@@ -150,15 +162,25 @@ function demo() {
 }
 function shell(content: string) {
   const venueName = esc(state.config?.venueName ?? "Bowling Espacio OX");
-  app.innerHTML = `<div class="shell"><header class="topbar"><a class="brand" data-action="nav" data-view="book"><span class="brand-mark" aria-hidden="true">OX</span><span><b>${venueName}</b><small>Bowling · Santiago</small></span></a><nav aria-label="Navegación principal"><button data-action="nav" data-view="book" class="${state.view === "book" ? "active" : ""}">Reservar</button><button data-action="nav" data-view="staff" class="${state.view === "staff" ? "active" : ""}">Recepción</button></nav><div class="top-end">${state.user ? `<span class="user-chip">${esc(state.user.name)} <button data-action="logout">Salir</button></span>` : `<button class="text-button" data-action="nav" data-view="staff">Acceso del equipo ↗</button>`}</div><button class="mobile-staff" data-action="nav" data-view="staff">☰</button></header>${demo()}${notice()}<main>${content}</main><footer><span><b>${venueName}</b> · Santiago</span><span>Hora local de Chile · America/Santiago</span><span>© 2026</span></footer></div>${state.modal ? modalHtml() : ""}`;
+  app.innerHTML = `<div class="shell"><header class="topbar"><a class="brand" data-action="nav" data-view="book"><span class="brand-mark" aria-hidden="true">OX</span><span><b>${venueName}</b><small>Bowling · Santiago</small></span></a><nav aria-label="Navegación principal"><button data-action="nav" data-view="book" class="${state.view === "book" ? "active" : ""}">Reservar</button><button data-action="nav" data-view="staff" class="${state.view === "staff" ? "active" : ""}">Recepción</button></nav><div class="top-end">${state.user ? `<span class="user-chip">${esc(state.user.name)} <button data-action="logout">Salir</button></span>` : `<button class="text-button" data-action="nav" data-view="staff">Acceso del equipo ↗</button>`}</div><button class="mobile-staff" data-action="nav" data-view="staff" aria-label="Acceso del equipo">Equipo ↗</button></header>${demo()}${notice()}<main>${content}</main><footer><span><b>${venueName}</b> · Santiago</span><span>Hora local de Chile · America/Santiago</span><span>© 2026</span></footer></div>${state.modal ? modalHtml() : ""}`;
 }
 function renderBook() {
   if (state.manageToken) return renderManage();
-  const maxDate = addCalendarDays(localDate(Date.now()), state.config?.maximumAdvanceDays ?? 60);
-  const content = `<section class="hero"><div class="hero-copy"><span class="eyebrow">✳ RESERVAS EN TIEMPO REAL</span><h1>Una buena noche<br>se arma <em>en equipo.</em></h1><p>Elige tu horario, encuentra el mejor espacio para tu grupo y deja el resto en nuestras manos.</p><div class="hero-facts"><span><b>12</b> pistas</span><span><b>6</b> jugadores por pista</span><span><b>${state.config?.preparationMinutes ?? 10} min</b> entre grupos</span></div></div><div class="hero-visual" aria-label="Pistas de bowling"><span class="glow"></span><div class="pin pin-a"></div><div class="pin pin-b"></div><div class="pin pin-c"></div><div class="ball"><i></i><i></i><i></i></div><div class="art-caption"><span>● EN VIVO</span><b>La pista que<br>se adapta a ustedes</b></div></div></section>
-  <section class="booking-card"><div class="section-heading"><div><span class="eyebrow">ENCUENTRA TU HORARIO</span><h2>¿Cuándo jugamos?</h2><p>Comparamos todas las pistas para ofrecerte alternativas útiles.</p></div><div class="steps"><b>01</b> Buscar <i></i><b>02</b> Elegir <i></i><b>03</b> Confirmar</div></div>
-  <form id="search" class="search-grid"><label>Fecha<input name="date" type="date" min="${localDate(Date.now())}" max="${maxDate}" value="${esc(state.date)}" required></label><label>Hora preferida<input name="time" type="time" step="${(state.config?.startIntervalMinutes ?? 10) * 60}" value="${esc(state.time)}" required></label><label>Jugadores<input name="players" type="number" min="1" max="72" value="${state.players}" required></label><label>Tiempo de juego<select name="duration">${[60, 120, 180, 240].map((n) => `<option value="${n}" ${state.duration === n ? "selected" : ""}>${n / 60} ${n === 60 ? "hora" : "horas"}</option>`).join("")}</select></label><button class="button primary search-button" ${state.loading ? "disabled" : ""}>${state.loading ? "Buscando…" : "Buscar horarios →"}</button>${state.players > 12 ? `<label class="check-row"><input name="separated" type="checkbox" ${state.separated ? "checked" : ""}> Acepto pistas separadas si no hay un grupo contiguo.</label>` : ""}</form>
-  ${state.options.length ? renderOptions() : ""}${state.availabilitySearched && !state.options.length && !state.selected && !state.result ? renderEmptyAvailability() : ""}${state.selected ? renderRequestForm() : ""}${state.result ? renderResult() : ""}</section>
+  const today = localDate(Date.now());
+  const maxDate = addCalendarDays(today, state.config?.maximumAdvanceDays ?? 60);
+  const lastDateWindowStart = addCalendarDays(maxDate, -6);
+  const windowStart = state.dateWindowStart < today ? today : state.dateWindowStart;
+  const dates = Array.from({ length: 7 }, (_, index) => addCalendarDays(windowStart, index));
+  const dateButtons = dates
+    .map(
+      (date) =>
+        `<button type="button" class="date-chip ${date === state.date ? "selected" : ""}" data-action="date-select" data-date="${date}" aria-pressed="${date === state.date}" ${date > maxDate ? "disabled" : ""}><span aria-hidden="true">${date === today ? "HOY" : shortWeekday(date)}</span><b aria-hidden="true">${date.slice(-2)}</b><span class="visually-hidden">${esc(dateText(date))}</span></button>`,
+    )
+    .join("");
+  const content = `<section class="booking-layout"><div class="booking-intro"><div class="booking-intro-copy"><span class="eyebrow">✳ RESERVAS EN ESPACIO OX</span><h1>Arma el plan.<br><em>La pista te espera.</em></h1><p>Encuentra el horario perfecto para tu grupo. Nosotros preparamos las pistas.</p><div class="hero-facts"><span><b>12</b> pistas</span><span><b>6</b> jugadores por pista</span><span><b>${state.config?.preparationMinutes ?? 10} min</b> entre grupos</span></div></div><div class="hero-visual" aria-hidden="true"><span class="glow"></span><div class="pin pin-a"></div><div class="pin pin-b"></div><div class="pin pin-c"></div><div class="ball"><i></i><i></i><i></i></div><div class="art-caption"><span>● ESPACIO OX</span><b>El plan perfecto<br>para compartir</b></div></div></div>
+  <section class="booking-card"><div class="booking-heading"><div><span class="eyebrow">01 · PLANIFICA TU VISITA</span><h2>¿Cuándo jugamos?</h2><p>Elige el día y cuéntanos cómo viene tu grupo.</p></div><div class="steps" aria-label="Pasos de la reserva"><b>1</b> Busca <i></i><b>2</b> Elige <i></i><b>3</b> Confirma</div></div>
+  <form id="search" class="search-grid"><div class="date-picker-block"><div class="date-picker-heading"><span>Elige un día <small>${monthYear(state.date)}</small></span><label class="date-picker">＋ Otra fecha<input name="date" type="date" min="${today}" max="${maxDate}" value="${esc(state.date)}" required aria-label="Otra fecha"></label></div><div class="date-strip" role="group" aria-label="Próximos días"><button type="button" class="date-week-nav" data-action="date-week" data-direction="previous" aria-label="Ver semana anterior" ${windowStart <= today ? "disabled" : ""}>‹</button>${dateButtons}<button type="button" class="date-week-nav" data-action="date-week" data-direction="next" aria-label="Ver semana siguiente" ${windowStart >= lastDateWindowStart ? "disabled" : ""}>›</button></div></div><label>Hora preferida<input name="time" type="time" step="${(state.config?.startIntervalMinutes ?? 10) * 60}" value="${esc(state.time)}" required></label><label>Jugadores<div class="player-stepper"><button type="button" data-action="players-adjust" data-step="-1" aria-label="Quitar un jugador" ${state.players <= 1 ? "disabled" : ""}>−</button><input name="players" type="number" min="1" max="72" value="${state.players}" required aria-label="Cantidad de jugadores"><button type="button" data-action="players-adjust" data-step="1" aria-label="Agregar un jugador" ${state.players >= 72 ? "disabled" : ""}>＋</button></div></label><label>Tiempo de juego<select name="duration">${[60, 120, 180, 240].map((n) => `<option value="${n}" ${state.duration === n ? "selected" : ""}>${n / 60} ${n === 60 ? "hora" : "horas"}</option>`).join("")}</select></label><button class="button primary search-button" ${state.loading ? "disabled" : ""}>${state.loading ? "Buscando horarios…" : "Buscar horarios →"}</button>${state.players > 12 ? `<label class="check-row"><input name="separated" type="checkbox" ${state.separated ? "checked" : ""}> Acepto pistas separadas si no hay un grupo contiguo.</label>` : ""}</form>
+  ${state.options.length ? renderOptions() : ""}${state.availabilitySearched && !state.options.length && !state.selected && !state.result ? renderEmptyAvailability() : ""}${state.selected ? renderRequestForm() : ""}${state.result ? renderResult() : ""}</section></section>
   <section class="how"><div><span class="eyebrow">ASÍ DE FÁCIL</span><h2>Menos coordinar.<br><em>Más jugar.</em></h2></div><div class="how-cards"><article><b>01</b><span>⌕</span><h3>Busca</h3><p>Indica el día, hora ideal y tamaño del grupo.</p></article><article><b>02</b><span>◷</span><h3>Compara</h3><p>Revisa horarios y precios antes de decidir.</p></article><article><b>03</b><span>↗</span><h3>Confirma</h3><p>Verifica tu correo y sigue tu reserva con un enlace privado.</p></article></div></section><section class="venue-strip"><span>⌖</span><b>Nos encontramos en Santiago</b><small>La disponibilidad se muestra en hora local de Chile.</small><button data-action="nav" data-view="staff">¿Necesitas ayuda? Habla con recepción ↗</button></section>`;
   shell(content);
 }
@@ -172,7 +194,7 @@ function renderOptions() {
   const repeatedTimes = new Set(
     [...counts].filter(([, count]) => count > 1).map(([startTime]) => startTime),
   );
-  return `<section class="options"><div class="panel-title"><div><span class="eyebrow">${state.options.length} ${state.options.length === 1 ? "OPCIÓN ENCONTRADA" : "OPCIONES ENCONTRADAS"}</span><h3>${esc(dateText(state.date))}</h3><p>Ordenadas cerca de las ${esc(state.time)}. “Recomendado” conserva mejor disponibilidad para otros grupos; revisaremos tu opción al enviar.</p></div><span class="pill">${state.players} personas · ${state.duration / 60} h</span></div>${nearest
+  return `<section class="options"><div class="panel-title"><div><span class="eyebrow">${state.options.length} ${state.options.length === 1 ? "OPCIÓN ENCONTRADA" : "OPCIONES ENCONTRADAS"}</span><h3>${esc(dateText(state.date))}</h3><p>Cerca de las ${esc(state.time)}. Recomendado conserva más horarios disponibles para otros grupos.</p></div><span class="pill">${state.players} personas · ${state.duration / 60} h</span></div>${nearest
     .map((o: Option) => {
       const chosen = state.selected?.startMs === o.startMs;
       const tag =
@@ -807,6 +829,20 @@ app.addEventListener("submit", async (event) => {
 });
 app.addEventListener("input", (event) => {
   const input = event.target as HTMLInputElement;
+  if (input.form?.id === "search") {
+    if (input.name === "date") {
+      state.date = input.value;
+      if (
+        state.date < state.dateWindowStart ||
+        state.date > addCalendarDays(state.dateWindowStart, 6)
+      )
+        state.dateWindowStart = state.date;
+    }
+    if (input.name === "time") state.time = input.value;
+    if (input.name === "players") state.players = Number(input.value);
+    if (input.name === "duration") state.duration = Number(input.value);
+    return;
+  }
   if (input.form?.id !== "request") return;
   if (input.name === "name") state.requestName = input.value;
   if (input.name === "email") state.requestEmail = input.value;
@@ -837,6 +873,61 @@ app.addEventListener("click", async (event) => {
   const action = target.dataset.action!,
     id = target.dataset.id;
   try {
+    if (action === "date-select") {
+      state.date = target.dataset.date!;
+      state.options = [];
+      state.availabilitySearched = false;
+      state.selected = null;
+      state.result = null;
+      state.proof = "";
+      render();
+      document
+        .querySelector<HTMLButtonElement>(`[data-action="date-select"][data-date="${state.date}"]`)
+        ?.focus();
+      return;
+    }
+    if (action === "date-week") {
+      const direction = target.dataset.direction === "next" ? 7 : -7;
+      const today = localDate(Date.now());
+      const maxDate = addCalendarDays(today, state.config?.maximumAdvanceDays ?? 60);
+      const lastWindowStart = addCalendarDays(maxDate, -6);
+      const nextDate = addCalendarDays(state.date, direction);
+      const nextWindowStart = addCalendarDays(state.dateWindowStart, direction);
+      state.date = nextDate < today ? today : nextDate > maxDate ? maxDate : nextDate;
+      state.dateWindowStart =
+        nextWindowStart < today
+          ? today
+          : nextWindowStart > lastWindowStart
+            ? lastWindowStart
+            : nextWindowStart;
+      state.options = [];
+      state.availabilitySearched = false;
+      state.selected = null;
+      state.result = null;
+      state.proof = "";
+      render();
+      document
+        .querySelector<HTMLButtonElement>(
+          `[data-action="date-week"][data-direction="${target.dataset.direction}"]`,
+        )
+        ?.focus();
+      return;
+    }
+    if (action === "players-adjust") {
+      state.players = Math.max(1, Math.min(72, state.players + Number(target.dataset.step)));
+      state.options = [];
+      state.availabilitySearched = false;
+      state.selected = null;
+      state.result = null;
+      state.proof = "";
+      render();
+      document
+        .querySelector<HTMLButtonElement>(
+          `[data-action="players-adjust"][data-step="${target.dataset.step}"]`,
+        )
+        ?.focus();
+      return;
+    }
     if (action === "calendar-slot") {
       const start = Number(target.dataset.axisStart);
       const end = Number(target.dataset.axisEnd);

@@ -14,6 +14,12 @@ test("@visual public booking screens match mobile visual baselines", async ({ pa
     fullPage: true,
     animations: "disabled",
   });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await expect(page).toHaveScreenshot("public-booking-desktop.png", {
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
 
   const date = page.locator('#search [name="date"]');
   const bookingDate = addDays(await date.inputValue(), 7);
