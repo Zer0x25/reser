@@ -1870,3 +1870,270 @@ footer b {
   margin: 0;
   min-height: 29px;
 }
+
+/* Espacio OX identity and a clearer, more interactive reception calendar. */
+:root {
+  font-family: Poppins, "Avenir Next", Inter, ui-sans-serif, system-ui, sans-serif;
+  color: #252525;
+  background: #ede9de;
+  --ink: #252525;
+  --muted: #706b68;
+  --line: #e5dfd6;
+  --green: #aa0737;
+  --mint: #fbeaf0;
+  --paper: #fff;
+  --orange: #ff0b53;
+  --serif: Poppins, "Avenir Next", Inter, ui-sans-serif, system-ui, sans-serif;
+  --ox-pink: #ff0b53;
+  --ox-burgundy: #aa0737;
+  --ox-cream: #ede9de;
+  --ox-green: #006a4b;
+}
+body,
+.shell {
+  background: var(--ox-cream);
+}
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline-color: var(--ox-pink);
+}
+.topbar {
+  background: var(--ink);
+  border-bottom-color: #423d3b;
+}
+.brand {
+  color: #fff;
+}
+.brand small {
+  color: #d4ceca;
+}
+.brand-mark {
+  border-radius: 10px;
+  background: var(--ox-pink);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: -0.04em;
+}
+.topbar nav button.active {
+  color: #fff;
+}
+.topbar nav button.active:after {
+  background: var(--ox-pink);
+}
+.text-button {
+  color: #ffd7e1;
+}
+.user-chip {
+  color: #fff;
+}
+.user-chip button {
+  color: #ffd7e1;
+}
+.mobile-staff {
+  background: var(--ox-pink);
+  color: #fff;
+}
+.demo-banner {
+  background: #fff1f5;
+  color: var(--ox-burgundy);
+  border-bottom-color: #f4d1dc;
+}
+.demo-banner i {
+  background: var(--ox-pink);
+}
+.demo-banner span {
+  color: #71525c;
+}
+.eyebrow {
+  color: var(--ox-burgundy);
+}
+.hero h1 {
+  color: var(--ink);
+}
+.hero {
+  background: var(--ox-cream);
+}
+.hero h1 em,
+.how h2 em,
+.new-grid h2 em,
+.login-side h1 em {
+  color: var(--ox-pink);
+}
+.hero-facts b {
+  color: var(--ox-burgundy);
+}
+.hero-visual {
+  border-radius: 24px;
+  background: linear-gradient(145deg, #252525 0%, #6d082d 48%, #ff0b53 100%);
+  box-shadow: inset 0 -45px 80px #25252555;
+}
+.hero-visual:before,
+.hero-visual:after {
+  background: linear-gradient(90deg, #ede9de, #d6cfc6 50%, #ede9de);
+}
+.glow {
+  background: #ffbed0;
+}
+.pin:before {
+  border-color: var(--ox-pink);
+}
+.ball {
+  background: radial-gradient(circle at 30% 27%, #ff9bb7, #ff0b53 50%, #aa0737);
+  box-shadow: 8px 14px 18px #25252570;
+}
+.ball i {
+  background: #760529;
+}
+.art-caption span,
+.art-caption b {
+  color: #fff;
+}
+.steps b {
+  background: #fbeaf0;
+  color: var(--ox-burgundy);
+}
+.booking-card {
+  border-color: #e4ddd4;
+  box-shadow: 0 12px 42px #3e251508;
+}
+.primary {
+  background: var(--ox-burgundy);
+  color: #fff;
+}
+.primary:hover {
+  background: #85052c;
+}
+.outline {
+  border-color: #dec1cb;
+  color: var(--ox-burgundy);
+}
+.check-row input,
+.accept input {
+  accent-color: var(--ox-burgundy);
+}
+.option-card.chosen {
+  background: #fff3f6;
+  border-color: #f2c3d1;
+}
+.chosen-button {
+  background: #fbeaf0;
+  color: var(--ox-burgundy);
+}
+.request-card {
+  background: #fffafb;
+  border-color: #efd4dc;
+}
+.total b {
+  color: var(--ox-burgundy);
+}
+.how-cards article > span {
+  background: #fbeaf0;
+  color: var(--ox-burgundy);
+}
+.venue-strip {
+  background: #fbeaf0;
+}
+.venue-strip > span {
+  color: var(--ox-pink);
+}
+.venue-strip button,
+footer b {
+  color: var(--ox-burgundy);
+}
+.login-side {
+  background: #fbeaf0;
+}
+.staff-tabs {
+  background: #e4ded7;
+}
+.staff-tabs button.current {
+  color: var(--ox-burgundy);
+}
+.metrics b {
+  color: var(--ox-burgundy);
+}
+.lane-label > b {
+  background: #fbeaf0;
+  color: var(--ox-burgundy);
+}
+.track {
+  cursor: crosshair;
+}
+.track:hover {
+  background-color: #fff8fa;
+}
+.track:focus-visible {
+  outline: 2px solid var(--ox-pink);
+  outline-offset: -2px;
+}
+.event.booked {
+  background: #fbe3eb;
+  color: #83052c;
+}
+.event.booked:hover {
+  background: #f7cfdb;
+}
+.event.held {
+  background: #fff1df;
+  color: #83521a;
+}
+.event.blocked {
+  background: #e4dfd9;
+  color: #625a54;
+  cursor: not-allowed;
+}
+.staff-day-nav {
+  display: flex;
+  align-items: end;
+  gap: 7px;
+}
+.staff-day-nav label {
+  font-size: 10px;
+  font-weight: 700;
+}
+.staff-day-nav input {
+  display: block;
+  width: 155px;
+  margin-top: 6px;
+  height: 38px;
+}
+.staff-day-nav .button {
+  min-width: 38px;
+  padding: 0 11px;
+}
+.calendar-hint {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin: -3px 0 12px;
+  padding: 10px 12px;
+  border: 1px solid #f2d4de;
+  border-radius: 8px;
+  background: #fff7f9;
+  color: #5e4b50;
+  font-size: 10px;
+}
+.calendar-hint b {
+  color: var(--ox-burgundy);
+  white-space: nowrap;
+}
+.calendar-hint span {
+  color: #70666a;
+}
+@media (max-width: 700px) {
+  .staff-day-nav {
+    gap: 5px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .staff-day-nav input {
+    width: 132px;
+  }
+  .calendar-hint {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
+  }
+}

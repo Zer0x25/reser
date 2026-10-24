@@ -23,7 +23,7 @@ Accesos locales:
 | Recepción      | `recepcion@demo.local` | `BowlingDemo2026!` |
 | Administración | `admin@demo.local`     | `BowlingDemo2026!` |
 
-Son credenciales exclusivas de demostración. Los códigos de verificación y mensajes de correo de desarrollo aparecen en la terminal donde corre la API. Los datos, reservas y precios iniciales son de ejemplo y no autorizan cobros.
+Son credenciales exclusivas de demostración. Los códigos de verificación y mensajes de correo de desarrollo aparecen en la terminal donde corre la API. La demo agrega reservas ficticias, una solicitud pendiente de aprobación, un pago informado sin acreditar y un bloqueo de mantenimiento; los correos usan dominios reservados `.test`. Los datos y precios son ejemplos y no autorizan cobros.
 
 ## Verificación
 
@@ -85,6 +85,7 @@ El servicio debe devolver un estado HTTP 2xx cuando acepte el mensaje. La aplica
 - Búsqueda pública, cotización en CLP, franjas y excepciones tarifarias, promociones no acumulables, verificación de correo, solicitud automática hasta el umbral configurado y retenciones para aprobación.
 - Seguimiento con enlace aleatorio de 24 horas, renovación después de verificar el correo, aceptación de nuevo precio y cancelación web con al menos 24 horas de anticipación.
 - Tablero de doce pistas, solicitudes, reservas telefónicas/presenciales, check-in, resolución manual de ausencias, término real, extensiones autorizadas, mantenimiento, reoptimización localizada, pagos informados/verificados y devoluciones externas para administración.
+- Calendario de recepción con navegación por día, acceso rápido a hoy y selección de un espacio libre para precargar fecha y hora en el formulario manual. La disponibilidad se valida al guardar y la pista se asigna en el servidor.
 - Administración de horarios, preparación, tarifas, promociones, empleados, activación de cuentas, cola de correo y auditoría.
 
 La optimización utiliza una puntuación de escenarios de demanda y una búsqueda localizada limitada a 80 reservas por operación. Es una heurística reproducible; no demuestra el óptimo global. Los precios se calculan por minuto local y se redondea una sola vez al CLP más cercano (mitades hacia arriba).

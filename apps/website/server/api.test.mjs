@@ -19,6 +19,10 @@ async function freePort() {
 async function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+function addLocalDays(date, amount) {
+  const [year, month, day] = date.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day + amount)).toISOString().slice(0, 10);
+}
 
 test("HTTP API authenticates staff and serializes competing claims on the final inventory", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "bowling-api-"));
@@ -77,6 +81,32 @@ test("HTTP API authenticates staff and serializes competing claims on the final 
   });
   assert.equal(login.status, 200);
   const cookie = login.headers.get("set-cookie").split(";")[0];
+  const tomorrowBoard = await fetch(
+    `${base}/api/staff/board?date=${addLocalDays(formatLocalDate(Date.now()), 1)}`,
+    { headers: { cookie } },
+  );
+  assert.equal(tomorrowBoard.status, 200);
+  assert.ok(
+    (await tomorrowBoard.json()).reservations.some(
+      (booking) => booking.customerName === "Valentina Soto · demo",
+    ),
+  );
+  const seededRequests = await fetch(`${base}/api/staff/requests`, { headers: { cookie } });
+  assert.deepEqual(
+    (await seededRequests.json()).requests.map((request) => request.name),
+    ["Grupo de cumpleaños · demo"],
+  );
+  const fixtureDay = await fetch(
+    `${base}/api/staff/board?date=${addLocalDays(formatLocalDate(Date.now()), 2)}`,
+    { headers: { cookie } },
+  );
+  const fixtures = await fixtureDay.json();
+  assert.ok(
+    fixtures.reservations.some((booking) =>
+      booking.payments.some((payment) => payment.status === "reported"),
+    ),
+  );
+  assert.ok(fixtures.blocks.some((block) => block.reason.includes("demo")));
   const blockedAdmin = await fetch(`${base}/api/staff/settings`, { headers: { cookie } });
   assert.equal(blockedAdmin.status, 403);
   const fallBackBoard = await fetch(`${base}/api/staff/board?date=2026-04-04`, {

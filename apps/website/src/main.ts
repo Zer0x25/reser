@@ -49,6 +49,8 @@ const state: any = {
   kind: "",
   modal: null,
   manualKey: null,
+  manualStartAt: null as string | null,
+  manualStartMs: null as number | null,
 };
 function localParts(epoch: number) {
   return Object.fromEntries(
@@ -68,6 +70,18 @@ function localParts(epoch: number) {
 function localDate(epoch: number) {
   const p = localParts(epoch);
   return `${p.year}-${p.month}-${p.day}`;
+}
+function localDateTime(epoch: number) {
+  const p = localParts(epoch);
+  return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`;
+}
+function canStartOn(date: string, clock: string) {
+  const [year, month, day] = date.split("-").map(Number);
+  const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+  const rule = state.config?.exceptions?.[date] ?? state.config?.weeklyHours?.[`${weekday}`];
+  if (!rule) return true;
+  if (rule.closed || !rule.open || !rule.close) return false;
+  return rule.close > rule.open ? clock >= rule.open && clock < rule.close : clock >= rule.open;
 }
 function addLocalDays(date: string, days: number) {
   const [year, month, day] = date.split("-").map(Number);
@@ -146,7 +160,8 @@ function demo() {
     : "";
 }
 function shell(content: string) {
-  app.innerHTML = `<div class="shell"><header class="topbar"><a class="brand" data-action="nav" data-view="book"><span class="brand-mark">✳</span><span><b>Pista</b> Central<small>Bowling · Santiago</small></span></a><nav><button data-action="nav" data-view="book" class="${state.view === "book" ? "active" : ""}">Reservar</button><button data-action="nav" data-view="staff" class="${state.view === "staff" ? "active" : ""}">Recepción</button></nav><div class="top-end">${state.user ? `<span class="user-chip">${esc(state.user.name)} <button data-action="logout">Salir</button></span>` : `<button class="text-button" data-action="nav" data-view="staff">Acceso del equipo ↗</button>`}</div><button class="mobile-staff" data-action="nav" data-view="staff">☰</button></header>${demo()}${notice()}<main>${content}</main><footer><span><b>Pista Central</b> · Bowling Santiago</span><span>Hora local de Chile · America/Santiago</span><span>© 2026</span></footer></div>${state.modal ? modalHtml() : ""}`;
+  const venueName = esc(state.config?.venueName ?? "Bowling Espacio OX");
+  app.innerHTML = `<div class="shell"><header class="topbar"><a class="brand" data-action="nav" data-view="book"><span class="brand-mark" aria-hidden="true">OX</span><span><b>${venueName}</b><small>Bowling · Santiago</small></span></a><nav><button data-action="nav" data-view="book" class="${state.view === "book" ? "active" : ""}">Reservar</button><button data-action="nav" data-view="staff" class="${state.view === "staff" ? "active" : ""}">Recepción</button></nav><div class="top-end">${state.user ? `<span class="user-chip">${esc(state.user.name)} <button data-action="logout">Salir</button></span>` : `<button class="text-button" data-action="nav" data-view="staff">Acceso del equipo ↗</button>`}</div><button class="mobile-staff" data-action="nav" data-view="staff">☰</button></header>${demo()}${notice()}<main>${content}</main><footer><span><b>${venueName}</b> · Santiago</span><span>Hora local de Chile · America/Santiago</span><span>© 2026</span></footer></div>${state.modal ? modalHtml() : ""}`;
 }
 function renderBook() {
   if (state.manageToken) return renderManage();
@@ -200,7 +215,7 @@ function renderManage() {
   );
 }
 function renderLogin() {
-  return `<section class="login-page"><div class="login-side"><span class="eyebrow">PISTA CENTRAL · EQUIPO</span><h1>Todo listo<br>para que <em>ruede.</em></h1><p>Accede al tablero de pistas, solicitudes y operación del día.</p><div class="login-pins">●　●　●<br>　●　●　●</div></div><div class="login-form"><span class="eyebrow">ACCESO INTERNO</span><h2>Hola de nuevo</h2><p>Ingresa con tu cuenta individual.</p><form id="login"><label>Correo de trabajo<input name="email" type="email" autocomplete="username" required></label><label>Contraseña<input name="password" type="password" autocomplete="current-password" required></label><button class="button primary">Ingresar →</button></form><small>El acceso queda registrado en auditoría.</small></div></section>`;
+  return `<section class="login-page"><div class="login-side"><span class="eyebrow">ESPACIO OX · EQUIPO</span><h1>Todo listo<br>para que <em>ruede.</em></h1><p>Accede al tablero de pistas, solicitudes y operación del día.</p><div class="login-pins">●　●　●<br>　●　●　●</div></div><div class="login-form"><span class="eyebrow">ACCESO INTERNO</span><h2>Hola de nuevo</h2><p>Ingresa con tu cuenta individual.</p><form id="login"><label>Correo de trabajo<input name="email" type="email" autocomplete="username" required></label><label>Contraseña<input name="password" type="password" autocomplete="current-password" required></label><button class="button primary">Ingresar →</button></form><small>El acceso queda registrado en auditoría.</small></div></section>`;
 }
 function renderStaff() {
   if (!state.user) {
@@ -217,6 +232,10 @@ function renderStaff() {
           ? "Nueva reserva"
           : "Administración";
   const tabs = `<nav class="staff-tabs"><button data-action="page" data-page="board" class="${state.page === "board" ? "current" : ""}">▦ Tablero</button><button data-action="page" data-page="requests" class="${state.page === "requests" ? "current" : ""}">◷ Solicitudes ${state.requests.length ? `<i>${state.requests.length}</i>` : ""}</button><button data-action="page" data-page="new" class="${state.page === "new" ? "current" : ""}">＋ Nueva reserva</button>${state.user.role === "admin" ? `<button data-action="page" data-page="settings" class="${state.page === "settings" ? "current" : ""}">⚙ Administración</button>` : ""}</nav>`;
+  const dateControl =
+    state.page === "board"
+      ? `<div class="staff-day-nav"><button class="button outline small" type="button" data-action="board-shift" data-days="-1" aria-label="Día anterior">←</button><button class="button outline small" type="button" data-action="board-today">Hoy</button><label>Fecha<input type="date" name="board-date" value="${esc(state.board?.date ?? localDate(Date.now()))}"></label><button class="button outline small" type="button" data-action="board-shift" data-days="1" aria-label="Día siguiente">→</button></div>`
+      : `<label>Fecha<input type="date" name="board-date" value="${esc(state.board?.date ?? localDate(Date.now()))}"></label>`;
   const content =
     state.page === "board"
       ? renderBoard()
@@ -226,7 +245,7 @@ function renderStaff() {
           ? renderNewBooking()
           : renderAdmin();
   shell(
-    `<section class="staff-work"><div class="staff-heading"><div><span class="eyebrow">OPERACIÓN DIARIA</span><h1>${title}</h1><p>${state.page === "board" ? "Inventario y compromisos del día, en hora de Santiago." : state.page === "requests" ? "Las solicitudes retenidas esperan una decisión humana." : state.page === "new" ? "Todos los canales comparten el mismo inventario." : "Precios, horarios, preparación y permisos."}</p></div><label>Fecha<input type="date" name="board-date" value="${esc(state.board?.date ?? localDate(Date.now()))}"></label></div>${tabs}${content}</section>`,
+    `<section class="staff-work"><div class="staff-heading"><div><span class="eyebrow">OPERACIÓN DIARIA</span><h1>${title}</h1><p>${state.page === "board" ? "Inventario y compromisos del día, en hora de Santiago." : state.page === "requests" ? "Las solicitudes retenidas esperan una decisión humana." : state.page === "new" ? "Todos los canales comparten el mismo inventario." : "Precios, horarios, preparación y permisos."}</p></div>${dateControl}</div>${tabs}${content}</section>`,
   );
 }
 function renderBoard() {
@@ -264,10 +283,10 @@ function renderBoard() {
         .map((block: any) => {
           const start = Math.max(0, axisMinute(block.start));
           const end = Math.min(spanMinutes, axisMinute(block.end));
-          return `<span class="event blocked" style="left:${(start / spanMinutes) * 100}%;width:${Math.max(0, ((end - start) / spanMinutes) * 100)}%" title="${esc(block.reason)}">Bloqueo</span>`;
+          return `<span class="event blocked" data-action="blocked-slot" style="left:${(start / spanMinutes) * 100}%;width:${Math.max(0, ((end - start) / spanMinutes) * 100)}%" title="${esc(block.reason)}">Bloqueo</span>`;
         })
         .join("");
-      return `<div class="lane-row"><div class="lane-label"><b>${lane.id}</b><span>Pista ${lane.id}</span><small>pareja ${lane.pair_id}</small></div><div class="track" style="--tick:${(180 / spanMinutes) * 100}%">${blocks}${events}</div></div>`;
+      return `<div class="lane-row"><div class="lane-label"><b>${lane.id}</b><span>Pista ${lane.id}</span><small>pareja ${lane.pair_id}</small></div><div class="track" data-action="calendar-slot" data-date="${esc(state.board.date)}" data-axis-start="${state.board.axisStartMs}" data-axis-end="${state.board.axisEndMs}" style="--tick:${(180 / spanMinutes) * 100}%" role="group" tabindex="0" aria-label="Pista ${lane.id}: selecciona un horario libre para iniciar una reserva">${blocks}${events}</div></div>`;
     })
     .join("");
   const ticks = tickOffsets
@@ -276,14 +295,15 @@ function renderBoard() {
         `<span style="left:${(offset / spanMinutes) * 100}%">${time(state.board.axisStartMs + offset * 60_000)}${offset === spanMinutes ? " +1 d" : ""}</span>`,
     )
     .join("");
-  return `<div class="metrics-wrap">${metrics}</div><section class="board-card"><div class="panel-title"><div><h2>Ocupación de pistas</h2><p>${esc(dateText(state.board.date))} · intervalos reales en hora de Santiago</p></div><div class="board-tools"><div class="legend"><span>● Confirmada</span><span>● Retenida</span><span>● Bloqueada</span></div><button class="button outline small" data-action="reoptimize">Reorganizar asignaciones flexibles</button></div></div><div class="board-scroll"><div class="hours"><div></div><div class="hour-track">${ticks}</div></div>${rows}</div><small class="board-note">La reorganización fija fecha, hora, duración y pistas contratadas; excluye reservas en preparación, check-in, curso o bloqueo operacional.</small></section><section class="plain-card maintenance-panel"><div class="panel-title"><div><h2>Mantenimiento y bloqueos</h2><p>Un bloqueo nuevo no puede desplazar una reserva ya comprometida.</p></div></div><form id="block-form" class="block-form"><label>Pista<select name="laneId"><option value="">Todas las pistas</option>${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}">Pista ${i + 1}</option>`).join("")}</select></label><label>Desde · hora de Santiago<input name="start" type="datetime-local" step="600" value="${esc(state.board.date)}T18:00" required></label><label>Hasta · hora de Santiago<input name="end" type="datetime-local" step="600" value="${esc(state.board.date)}T19:00" required></label><label>Motivo<input name="reason" maxlength="250" required placeholder="Inspección de pista"></label><button class="button outline">＋ Crear bloqueo</button></form>${state.board.blocks.length ? `<div class="block-list">${state.board.blocks.map((block: any) => `<div class="rate-row"><span><b>${block.laneId ? `Pista ${block.laneId}` : "Todas las pistas"} · ${time(block.start)}–${time(block.end)}</b><small>${esc(block.reason)}</small></span><button data-action="release-block" data-id="${esc(block.id)}">Liberar</button></div>`).join("")}</div>` : ""}</section>`;
+  return `<div class="metrics-wrap">${metrics}</div><section class="board-card"><div class="panel-title"><div><h2>Ocupación de pistas</h2><p>${esc(dateText(state.board.date))} · intervalos reales en hora de Santiago</p></div><div class="board-tools"><div class="legend"><span>● Confirmada</span><span>● Retenida</span><span>● Bloqueada</span></div><button class="button outline small" data-action="reoptimize">Reorganizar asignaciones flexibles</button></div></div><div class="calendar-hint"><b>＋ Reserva desde el calendario</b><span>Haz clic en una franja de atención libre para iniciar una reserva con día y hora precargados. Confirmaremos disponibilidad al guardarla.</span></div><div class="board-scroll"><div class="hours"><div></div><div class="hour-track">${ticks}</div></div>${rows}</div><small class="board-note">La reorganización fija fecha, hora, duración y pistas contratadas; excluye reservas en preparación, check-in, curso o bloqueo operacional.</small></section><section class="plain-card maintenance-panel"><div class="panel-title"><div><h2>Mantenimiento y bloqueos</h2><p>Un bloqueo nuevo no puede desplazar una reserva ya comprometida.</p></div></div><form id="block-form" class="block-form"><label>Pista<select name="laneId"><option value="">Todas las pistas</option>${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}">Pista ${i + 1}</option>`).join("")}</select></label><label>Desde · hora de Santiago<input name="start" type="datetime-local" step="600" value="${esc(state.board.date)}T18:00" required></label><label>Hasta · hora de Santiago<input name="end" type="datetime-local" step="600" value="${esc(state.board.date)}T19:00" required></label><label>Motivo<input name="reason" maxlength="250" required placeholder="Inspección de pista"></label><button class="button outline">＋ Crear bloqueo</button></form>${state.board.blocks.length ? `<div class="block-list">${state.board.blocks.map((block: any) => `<div class="rate-row"><span><b>${block.laneId ? `Pista ${block.laneId}` : "Todas las pistas"} · ${time(block.start)}–${time(block.end)}</b><small>${esc(block.reason)}</small></span><button data-action="release-block" data-id="${esc(block.id)}">Liberar</button></div>`).join("")}</div>` : ""}</section>`;
 }
 function renderRequests() {
   return `<section class="plain-card"><div class="panel-title"><div><h2>En espera de decisión</h2><p>La solicitud de aprobación conserva las pistas hasta que se resuelva.</p></div><span class="pill">${state.requests.length} pendientes</span></div>${state.requests.length ? state.requests.map((r: any) => `<article class="staff-request"><span class="avatar">${esc(r.name.slice(0, 1))}</span><div><b>${esc(r.name)} <small>${esc(r.code)}</small></b><p>${esc(r.email)} · ${r.players} jugadores · ${r.laneCount} pistas ${r.grouped ? "juntas" : "separadas"}</p><small>${esc(dateText(localDate(r.start)))} · ${time(r.start)}–${time(r.end)}</small><p class="request-status">${r.status === "pending_price_acceptance" ? `Precio por aceptar: ${money(r.updatedQuoteClp)}` : `Retenida · ${money(r.quoteClp)}`}</p></div><div class="actions">${r.status === "pending_approval" ? `<button class="button primary small" data-action="approve" data-id="${esc(r.id)}">Aprobar</button>` : `<span class="tag amber">Precio pendiente</span>`}<button class="button ghost small" data-action="reject" data-id="${esc(r.id)}">Rechazar</button></div></article>`).join("") : `<div class="empty"><b>✓</b><h3>Todo al día</h3><p>No hay solicitudes pendientes de revisión.</p></div>`}</section>`;
 }
 function renderNewBooking() {
   state.manualKey ??= crypto.randomUUID();
-  return `<section class="new-grid"><div class="plain-card"><span class="eyebrow">RESERVA INTERNA</span><h2>Atención rápida,<br><em>espacio asegurado.</em></h2><p>Teléfono requiere nombre y teléfono. Una reserva presencial futura requiere nombre y un medio de contacto. Inmediata: solo responsable.</p><div class="callout"><b>${state.config?.demoMode ? "Precio de demostración" : state.config?.rateConfigured ? "Tarifa vigente" : "Tarifa pendiente"}</b><span>${state.config?.demoMode ? "No usar para cobro real." : state.config?.rateConfigured ? "El precio se calculará en el momento de guardar." : "Configura una tarifa antes de crear reservas."}</span></div></div><div class="plain-card"><h3>Datos de la reserva</h3><form id="manual"><label>Canal<select name="channel"><option value="walk_in">Presencial inmediata</option><option value="phone">Teléfono</option><option value="counter_future">Presencial futura</option></select></label><div class="two-fields"><label>Nombre responsable<input name="name" required maxlength="120"></label><label>Teléfono<input name="phone" type="tel" maxlength="30"></label><label>Correo<input name="email" type="email" maxlength="254"></label><label>Jugadores<input name="players" type="number" min="1" max="72" value="4" required></label><label>Inicio · hora de Santiago<input name="startAt" type="datetime-local" step="600" value="${esc(state.date)}T18:00" required></label><label>Duración<select name="duration">${[60, 120, 180, 240].map((n) => `<option value="${n}">${n / 60} ${n === 60 ? "hora" : "horas"}</option>`).join("")}</select></label><label>Pistas contratadas<select name="laneCount"><option value="">Mínimas necesarias</option>${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join("")}</select></label><label class="check-row"><input name="separate" type="checkbox"> Cliente acepta pistas separadas</label></div><button class="button primary">Crear y retener pistas →</button></form></div></section>`;
+  const startAt = state.manualStartAt ?? `${state.board?.date ?? state.date}T18:00`;
+  return `<section class="new-grid"><div class="plain-card"><span class="eyebrow">RESERVA INTERNA</span><h2>Atención rápida,<br><em>espacio asegurado.</em></h2><p>Teléfono requiere nombre y teléfono. Una reserva presencial futura requiere nombre y un medio de contacto. Inmediata: solo responsable.</p><div class="callout"><b>${state.config?.demoMode ? "Precio de demostración" : state.config?.rateConfigured ? "Tarifa vigente" : "Tarifa pendiente"}</b><span>${state.config?.demoMode ? "No usar para cobro real." : state.config?.rateConfigured ? "El precio se calculará en el momento de guardar." : "Configura una tarifa antes de crear reservas."}</span></div></div><div class="plain-card"><h3>Datos de la reserva</h3><form id="manual"><input type="hidden" name="startMs" value="${state.manualStartMs ?? ""}"><label>Canal<select name="channel"><option value="walk_in">Presencial inmediata</option><option value="phone">Teléfono</option><option value="counter_future">Presencial futura</option></select></label><div class="two-fields"><label>Nombre responsable<input name="name" required maxlength="120"></label><label>Teléfono<input name="phone" type="tel" maxlength="30"></label><label>Correo<input name="email" type="email" maxlength="254"></label><label>Jugadores<input name="players" type="number" min="1" max="72" value="4" required></label><label>Inicio · hora de Santiago<input name="startAt" type="datetime-local" step="600" value="${esc(startAt)}" required></label><label>Duración<select name="duration">${[60, 120, 180, 240].map((n) => `<option value="${n}">${n / 60} ${n === 60 ? "hora" : "horas"}</option>`).join("")}</select></label><label>Pistas contratadas<select name="laneCount"><option value="">Mínimas necesarias</option>${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join("")}</select></label><label class="check-row"><input name="separate" type="checkbox"> Cliente acepta pistas separadas</label></div><button class="button primary">Crear y retener pistas →</button></form></div></section>`;
 }
 function renderAdmin() {
   if (!state.settings) return `<div class="loading-card">Cargando administración…</div>`;
@@ -525,12 +545,15 @@ app.addEventListener("submit", async (event) => {
           email: v("email"),
           players: +v("players"),
           startAt,
+          startMs: v("startMs") ? +v("startMs") : undefined,
           durationMinutes: +v("duration"),
           laneCount: v("laneCount") ? +v("laneCount") : undefined,
           acceptSeparated: d.has("separate"),
         }),
       });
       state.manualKey = crypto.randomUUID();
+      state.manualStartAt = null;
+      state.manualStartMs = null;
       state.page = "board";
       await loadStaff(localDate(localEpoch(startAt)));
       say(`Reserva ${r.booking.code} creada · ${money(r.booking.quoteClp)}.`, "success");
@@ -690,6 +713,19 @@ app.addEventListener("submit", async (event) => {
 app.addEventListener("change", (event) => {
   const input = event.target as HTMLInputElement;
   if (input.name === "board-date") void loadStaff(input.value);
+  if (input.name === "startAt") {
+    const exactStart = document.querySelector<HTMLInputElement>('#manual [name="startMs"]');
+    state.manualStartAt = input.value;
+    if (exactStart) {
+      try {
+        state.manualStartMs = localEpoch(input.value);
+        exactStart.value = `${state.manualStartMs}`;
+      } catch {
+        state.manualStartMs = null;
+        exactStart.value = "";
+      }
+    }
+  }
 });
 app.addEventListener("click", async (event) => {
   const target = (event.target as HTMLElement).closest<HTMLElement>("[data-action]");
@@ -697,6 +733,48 @@ app.addEventListener("click", async (event) => {
   const action = target.dataset.action!,
     id = target.dataset.id;
   try {
+    if (action === "calendar-slot") {
+      const start = Number(target.dataset.axisStart);
+      const end = Number(target.dataset.axisEnd);
+      const intervalMs = (state.config?.startIntervalMinutes ?? 10) * 60_000;
+      const bounds = target.getBoundingClientRect();
+      const fraction =
+        event.detail === 0
+          ? 0.5
+          : Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width));
+      const offset = Math.round(((end - start) * fraction) / intervalMs) * intervalMs;
+      const startMs = Math.max(start, Math.min(end - intervalMs, start + offset));
+      const date = target.dataset.date!;
+      if (!canStartOn(date, time(startMs))) {
+        say("Ese intervalo está fuera del horario de atención.", "info");
+        render();
+        return;
+      }
+      state.manualStartAt = localDateTime(startMs);
+      state.manualStartMs = startMs;
+      state.date = date;
+      state.page = "new";
+      say(
+        `Inicio precargado: ${dateText(state.date)} a las ${time(startMs)}. La disponibilidad se validará al guardar.`,
+        "info",
+      );
+      render();
+      document.querySelector<HTMLInputElement>('#manual [name="name"]')?.focus();
+      return;
+    }
+    if (action === "blocked-slot") {
+      say("Ese intervalo está reservado para mantenimiento.", "info");
+      render();
+      return;
+    }
+    if (action === "board-shift" || action === "board-today") {
+      const date =
+        action === "board-today"
+          ? localDate(Date.now())
+          : addLocalDays(state.board.date, Number(target.dataset.days));
+      await loadStaff(date);
+      return;
+    }
     if (action === "clear") {
       state.message = "";
       render();
@@ -1015,6 +1093,15 @@ app.addEventListener("click", async (event) => {
   } catch (e) {
     say(errorMessage(e), "error");
     render();
+  }
+});
+app.addEventListener("keydown", (event) => {
+  const target = (event.target as HTMLElement).closest<HTMLElement>(
+    '[data-action="calendar-slot"]',
+  );
+  if (target && (event.key === "Enter" || event.key === " ")) {
+    event.preventDefault();
+    target.click();
   }
 });
 void init();

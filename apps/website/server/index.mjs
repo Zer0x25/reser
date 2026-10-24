@@ -721,7 +721,7 @@ async function handleApi(req, res, url) {
     try {
       await sendMail({
         to: email,
-        subject: "Verifica tu correo · Pista Central",
+        subject: `Verifica tu correo · ${getSettings().venueName}`,
         text: `Tu código de verificación es ${code}. Vence en 10 minutos.`,
       });
     } catch (error) {
@@ -888,8 +888,8 @@ async function handleApi(req, res, url) {
         to: email,
         subject:
           status === "confirmed"
-            ? "Reserva confirmada · Pista Central"
-            : "Solicitud recibida · Pista Central",
+            ? `Reserva confirmada · ${getSettings().venueName}`
+            : `Solicitud recibida · ${getSettings().venueName}`,
         text: `${statusView(status)}. Código ${code}. Seguimiento seguro (vigente 24 horas): ${manageLink}`,
       });
       return {
@@ -967,7 +967,7 @@ async function handleApi(req, res, url) {
       const manageLink = `${baseUrl()}/seguimiento?token=${encodeURIComponent(rawToken)}`;
       const mailId = queueMail(conn, {
         to: email,
-        subject: "Nuevo enlace de seguimiento · Pista Central",
+        subject: `Nuevo enlace de seguimiento · ${getSettings().venueName}`,
         text: `Tu nuevo enlace de seguimiento para la reserva ${reservation.code} (vigente 24 horas): ${manageLink}`,
       });
       return { reservationId: reservation.id, mailId, manageLink };
@@ -1766,10 +1766,10 @@ async function handleApi(req, res, url) {
       const payload = {
         to: result.email,
         subject: result.rejected
-          ? "Solicitud cerrada · Pista Central"
+          ? `Solicitud cerrada · ${getSettings().venueName}`
           : result.priceChanged
-            ? "Precio actualizado · Pista Central"
-            : "Reserva confirmada · Pista Central",
+            ? `Precio actualizado · ${getSettings().venueName}`
+            : `Reserva confirmada · ${getSettings().venueName}`,
         text: result.rejected
           ? `Recepción rechazó la solicitud ${result.code}.`
           : result.priceChanged

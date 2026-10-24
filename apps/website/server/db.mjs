@@ -3,7 +3,7 @@ import { randomUUID, scryptSync } from "node:crypto";
 import { mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { formatLocalDate, localDateTimeToEpoch } from "./domain.mjs";
+import { formatLocalDate, laneSetsFor, localDateTimeToEpoch, matchesHours } from "./domain.mjs";
 
 export const demoMode =
   process.env.MVP_MODE !== "production" && process.env.NODE_ENV !== "production";
@@ -37,7 +37,7 @@ const DEMO_HOURS = {
 };
 const defaults = {
   settings: {
-    venueName: "Pista Central",
+    venueName: "Bowling Espacio OX",
     timeZone: "America/Santiago",
     demoMode,
     preparationMinutes: 10,
@@ -74,7 +74,15 @@ for (const [key, value] of Object.entries(defaults)) {
 const persistedSettings = JSON.parse(
   db.prepare("SELECT value_json FROM settings WHERE key='settings'").get().value_json,
 );
-const migratedSettings = { ...defaults.settings, ...persistedSettings, demoMode };
+const migratedSettings = {
+  ...defaults.settings,
+  ...persistedSettings,
+  venueName:
+    persistedSettings.venueName === "Pista Central"
+      ? "Bowling Espacio OX"
+      : persistedSettings.venueName,
+  demoMode,
+};
 db.prepare("UPDATE settings SET value_json=? WHERE key='settings'").run(
   JSON.stringify(migratedSettings),
 );
@@ -170,6 +178,276 @@ if (demoMode && !demoSeed) {
   db.prepare("INSERT INTO settings(key,value_json,updated_at) VALUES('demo_seeded','true',?)").run(
     now,
   );
+}
+
+// Add versioned, synthetic operational examples to existing demo databases without
+// changing production data or repeating the fixtures on every restart.
+const demoFixtures = db
+  .prepare("SELECT value_json FROM settings WHERE key = 'demo_fixtures_v2'")
+  .get();
+if (demoMode && !demoFixtures) {
+  const dateAfter = (days) => {
+    const [year, month, day] = formatLocalDate(Date.now()).split("-").map(Number);
+    const date = new Date(Date.UTC(year, month - 1, day + days));
+    return date.toISOString().slice(0, 10);
+  };
+  const rate = Number(migratedSettings.generalRateClpPerLaneHour);
+  transaction((conn) => {
+    const findLaneSet = (date, time, hours, players, laneCount) => {
+      const start = localDateTimeToEpoch(`${date}T${time}`);
+      const end = start + hours * 3_600_000;
+      const operationalEnd = end + migratedSettings.closingMarginMinutes * 60_000;
+      if (
+        !matchesHours(
+          start,
+          operationalEnd,
+          migratedSettings.weeklyHours,
+          migratedSettings.exceptions,
+        )
+      )
+        return null;
+      const busyUntil = end + migratedSettings.preparationMinutes * 60_000;
+      const busy = new Set(
+        conn
+          .prepare(
+            "SELECT DISTINCT lane_id FROM allocations WHERE active=1 AND start_ms < ? AND end_ms > ?",
+          )
+          .all(busyUntil, start)
+          .map((row) => row.lane_id),
+      );
+      const blocks = conn
+        .prepare(
+          "SELECT lane_id FROM maintenance_blocks WHERE status='active' AND start_ms < ? AND end_ms > ?",
+        )
+        .all(busyUntil, start);
+      for (const block of blocks) {
+        if (block.lane_id == null) return null;
+        busy.add(block.lane_id);
+      }
+      return (
+        laneSetsFor(players, laneCount).find((lanes) => lanes.every((lane) => !busy.has(lane))) ??
+        null
+      );
+    };
+    const findPlacement = ({ fromDay, time, hours, players, laneCount }) => {
+      for (let day = fromDay; day <= fromDay + 30; day += 1) {
+        const date = dateAfter(day);
+        const lanes = findLaneSet(date, time, hours, players, laneCount);
+        if (lanes) return { date, time, hours, players, lanes };
+      }
+      return null;
+    };
+    const insertReservation = conn.prepare(`INSERT INTO reservations(
+      id,code,request_id,customer_name,email,phone,channel,start_ms,end_ms,players,lane_count,
+      group_mode,commercial_status,inventory_status,financial_status,quote_clp,quote_json,
+      terms_accepted_at,created_at,updated_at,created_by
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+    const insertAllocation = conn.prepare(
+      "INSERT INTO allocations(id,reservation_id,lane_id,start_ms,end_ms,active,created_at) VALUES(?,?,?,?,?,1,?)",
+    );
+    const insertBooking = ({
+      date,
+      time,
+      hours = 1,
+      name,
+      email = null,
+      phone = null,
+      channel = "phone",
+      players,
+      lanes,
+      requestId = null,
+      reservationId = randomUUID(),
+    }) => {
+      const start = localDateTimeToEpoch(`${date}T${time}`);
+      const end = start + hours * 3_600_000;
+      const id = reservationId;
+      const total = lanes.length * hours * rate;
+      const status = requestId ? "pending_approval" : "confirmed";
+      insertReservation.run(
+        id,
+        `D2-${id.slice(0, 6).toUpperCase()}`,
+        requestId,
+        name,
+        email,
+        phone,
+        channel,
+        start,
+        end,
+        players,
+        lanes.length,
+        "together",
+        status,
+        requestId ? "held" : "assigned",
+        "unpaid",
+        total,
+        JSON.stringify({
+          baseClp: total,
+          discountClp: 0,
+          totalClp: total,
+          promotionName: null,
+          demo: true,
+        }),
+        now,
+        now,
+        now,
+        "system-demo",
+      );
+      for (const lane of lanes)
+        insertAllocation.run(
+          randomUUID(),
+          id,
+          lane,
+          start,
+          end + migratedSettings.preparationMinutes * 60_000,
+          now,
+        );
+      return { id, total };
+    };
+
+    const phoneBooking = findPlacement({
+      fromDay: 1,
+      time: "17:00",
+      hours: 1,
+      players: 4,
+      laneCount: 1,
+    });
+    if (phoneBooking)
+      insertBooking({
+        date: phoneBooking.date,
+        time: phoneBooking.time,
+        name: "Valentina Soto · demo",
+        phone: "+56900000011",
+        channel: "phone",
+        players: phoneBooking.players,
+        lanes: phoneBooking.lanes,
+      });
+    const groupBooking = findPlacement({
+      fromDay: 1,
+      time: "18:00",
+      hours: 2,
+      players: 10,
+      laneCount: 2,
+    });
+    if (groupBooking)
+      insertBooking({
+        date: groupBooking.date,
+        time: groupBooking.time,
+        hours: groupBooking.hours,
+        name: "Equipo cumpleaños · demo",
+        phone: "+56900000022",
+        channel: "counter_future",
+        players: groupBooking.players,
+        lanes: groupBooking.lanes,
+      });
+
+    const requestId = randomUUID();
+    const requestEmail = "grupo-demo@example.test";
+    const requestName = "Grupo de cumpleaños · demo";
+    const requestKey = "demo-fixture-v2-pending-approval";
+    const approvalBooking = findPlacement({
+      fromDay: 2,
+      time: "18:00",
+      hours: 2,
+      players: 15,
+      laneCount: 3,
+    });
+    if (approvalBooking) {
+      const pendingReservationId = randomUUID();
+      const pendingTotal = approvalBooking.lanes.length * approvalBooking.hours * rate;
+      conn
+        .prepare(`INSERT INTO booking_requests(
+        id,idempotency_key,email,customer_name,channel,status,reservation_id,
+        original_quote_clp,current_quote_clp,created_at,updated_at,created_by
+      ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`)
+        .run(
+          requestId,
+          requestKey,
+          requestEmail,
+          requestName,
+          "web",
+          "pending_approval",
+          pendingReservationId,
+          pendingTotal,
+          pendingTotal,
+          now,
+          now,
+          "system-demo",
+        );
+      insertBooking({
+        date: approvalBooking.date,
+        time: approvalBooking.time,
+        hours: approvalBooking.hours,
+        name: requestName,
+        email: requestEmail,
+        channel: "web",
+        players: approvalBooking.players,
+        lanes: approvalBooking.lanes,
+        requestId,
+        reservationId: pendingReservationId,
+      });
+    }
+
+    const paidBooking = findPlacement({
+      fromDay: 2,
+      time: "20:00",
+      hours: 1,
+      players: 4,
+      laneCount: 1,
+    });
+    const partial = paidBooking
+      ? insertBooking({
+          date: paidBooking.date,
+          time: paidBooking.time,
+          name: "Reserva transferencia · demo",
+          email: "pago-demo@example.test",
+          channel: "counter_future",
+          players: paidBooking.players,
+          lanes: paidBooking.lanes,
+        })
+      : null;
+    if (partial?.total > 0)
+      conn
+        .prepare(`INSERT INTO payments(
+          id,idempotency_key,reservation_id,amount_clp,method,status,reference,created_at,created_by
+        ) VALUES(?,?,?,?,?,?,?,?,?)`)
+        .run(
+          randomUUID(),
+          "demo-fixture-v2-reported-payment",
+          partial.id,
+          Math.max(1, Math.floor(partial.total / 2)),
+          "transfer",
+          "reported",
+          "DEMO-TRANSFERENCIA",
+          now,
+          "system-demo",
+        );
+    const maintenance = findPlacement({
+      fromDay: 2,
+      time: "18:00",
+      hours: 1,
+      players: 1,
+      laneCount: 1,
+    });
+    if (maintenance)
+      conn
+        .prepare(
+          "INSERT INTO maintenance_blocks(id,lane_id,start_ms,end_ms,reason,status,created_at,created_by) VALUES(?,?,?,?,?,'active',?,?)",
+        )
+        .run(
+          randomUUID(),
+          maintenance.lanes[0],
+          localDateTimeToEpoch(`${maintenance.date}T${maintenance.time}`),
+          localDateTimeToEpoch(`${maintenance.date}T${maintenance.time}`) + 60 * 60_000,
+          "Revisión de sensores · demo",
+          now,
+          "system-demo",
+        );
+    conn
+      .prepare(
+        "INSERT INTO settings(key,value_json,updated_at) VALUES('demo_fixtures_v2','true',?)",
+      )
+      .run(now);
+  });
 }
 
 export function transaction(callback) {
