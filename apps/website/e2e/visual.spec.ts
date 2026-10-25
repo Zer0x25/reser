@@ -41,6 +41,8 @@ test("@visual public booking screens match mobile visual baselines", async ({ pa
             minimumLanes: 1,
             grouped: true,
             quote: { totalClp: 12_000, baseClp: 12_000, discountClp: 0 },
+            quoteToken: "visual-test-quote-token",
+            quoteExpiresAt: startMs + 20 * 60_000,
             distanceMinutes: 0,
             rank: 1,
             recommended: true,

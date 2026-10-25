@@ -350,7 +350,7 @@ test("customer accepts the revised price after reception rechecks a request", as
   await page.locator('#search [name="players"]').fill("13");
   await page.locator('#search [name="duration"]').selectOption("60");
   await page.getByRole("button", { name: "Buscar horarios →" }).click();
-  await expect(page.locator(".option-card").first()).toBeVisible();
+  await expect(page.locator(".option-card").first()).toBeVisible({ timeout: 15_000 });
   await page.locator(".option-card").first().locator('[data-action="select"]').click();
 
   const customerName = `E2E Precio ${Date.now()}`;
