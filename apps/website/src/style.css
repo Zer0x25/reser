@@ -3247,7 +3247,10 @@ footer {
   place-items: center;
   border-radius: 50%;
   background: #fbeaf0;
-  font-size: 12px;
+}
+.date-picker-arrow .arrow-up-right {
+  width: 11px;
+  height: 11px;
 }
 .date-picker input {
   position: absolute;
@@ -3864,6 +3867,17 @@ footer {
   background: #f5f1e9ee;
   backdrop-filter: blur(12px);
 }
+.arrow-up-right {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
 .admin-section-nav button {
   display: inline-flex;
   align-items: center;
@@ -4150,13 +4164,31 @@ footer {
   }
   .admin-section-nav {
     position: static;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
     width: 100%;
     border-radius: 10px;
+    overflow: visible;
   }
   .admin-section-nav button {
-    min-height: 38px;
-    padding: 7px 10px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 3px;
+    min-width: 0;
+    min-height: 58px;
+    padding: 6px 8px;
     font-size: 10px;
+    line-height: 1.25;
+    text-align: left;
+    white-space: normal;
+  }
+  .admin-section-nav i {
+    min-width: 0;
+    height: 18px;
+    font-size: 9px;
   }
   .admin-summary {
     grid-template-columns: 1fr 1fr;
@@ -4419,8 +4451,9 @@ footer {
   background: #fff7f9;
   box-shadow: 0 7px 16px #7c0c291c;
 }
-.venue-maps-link span:last-child {
-  font-size: 15px;
+.venue-maps-link .arrow-up-right {
+  width: 14px;
+  height: 14px;
 }
 @media (max-width: 700px) {
   .venue-strip {
