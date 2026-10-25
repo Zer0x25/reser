@@ -68,7 +68,7 @@ La consulta no reserva capacidad. La escritura vuelve a comprobar precio y dispo
 
 ### Recepción
 
-La recepción consulta el mismo inventario. Un clic en una franja precarga un inicio; arrastrar sobre el calendario selecciona inicio y duración usando el bloque operativo configurado. La ficha ofrece formularios equivalentes para teclado. Arrastrar una reserva futura cambia su hora y pista objetivo; la API vuelve a validar horario, capacidad, preparación, bloqueos y precio en una transacción. Si el precio cambia, se requiere aceptación antes de guardar. El movimiento manual fija las pistas frente a la reorganización automática; recepción puede cambiar esa protección desde la ficha.
+La recepción consulta el mismo inventario. Un clic en una franja precarga un inicio; arrastrar sobre el calendario selecciona un inicio en el bloque operativo configurado y una duración en horas completas. La ficha ofrece formularios equivalentes para teclado. Arrastrar una reserva futura cambia su hora y pista objetivo; la API vuelve a validar horario, capacidad, preparación, bloqueos y precio en una transacción. Si el precio cambia, se requiere aceptación antes de guardar. El movimiento manual fija las pistas frente a la reorganización automática; recepción puede cambiar esa protección desde la ficha.
 
 ## Datos y fronteras de confianza
 
@@ -86,7 +86,7 @@ La recepción consulta el mismo inventario. Un clic en una franja precarga un in
 - El horario semanal pertenece al día en que abre el local. Si el viernes abre 15:00–01:00, esa jornada termina el sábado a la 01:00; una reserva que comienza el sábado antes de esa hora se valida contra la jornada del viernes, aunque el sábado esté marcado cerrado. La disponibilidad pública se consulta por la fecha civil local en que comienza la reserva.
 - El margen de cierre se resta del último término permitido. Con cierre a la 01:00 y margen de 30 minutos, una sesión debe terminar a más tardar a las 00:30. Para admitir una sesión de una hora que comienza a las 00:00, el margen debe ser cero.
 - El tablero de recepción muestra el intervalo completo de la jornada seleccionada y puede cruzar medianoche; los intervalos del día civil siguen resolviéndose con reglas de `America/Santiago`, incluso si duran 23 o 25 horas.
-- El bloque operativo configurable (5, 10, 12, 15, 20, 30 o 60 minutos; inicial 10) alinea inicios, duraciones de al menos 60 minutos y extensiones. A 10 minutos, una hora consta de seis bloques. El ancho en píxeles por hora ajusta únicamente la escala visual y el zoom del eje.
+- El bloque operativo configurable (5, 10, 12, 15, 20, 30 o 60 minutos; inicial 10) alinea los inicios y las extensiones. Las reservas nuevas duran 60 minutos o múltiplos de una hora. El ancho en píxeles por hora ajusta únicamente la escala visual y el zoom del eje.
 - La extensión desde el calendario solo está disponible después del check-in. Se selecciona arrastrando el borde final y se confirma en el formulario con aceptación del cliente; la API vuelve a validar precio, preparación y cierre.
 - La reorganización automática cambia asignaciones de pistas, no horarios. Las reservas fijadas manualmente quedan excluidas; una acción manual de movimiento actualiza el horario y fija la nueva asignación con auditoría.
 - El dominio representa parejas y agrupación física explícitamente. No se sustituye su criterio por la primera pista libre.

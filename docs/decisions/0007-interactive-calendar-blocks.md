@@ -1,6 +1,6 @@
 # ADR 0007: Bloques configurables y calendario operativo interactivo
 
-**Estado:** aceptado para el MVP
+**Estado:** aceptado para el MVP; la política de duración inicial fue reemplazada por [ADR 0008](0008-hourly-booking-durations.md).
 **Fecha:** 2026-10-24
 
 ## Contexto
@@ -10,9 +10,9 @@ El ancho visual en píxeles por hora ajusta la escala y el desplazamiento horizo
 ## Decisión
 
 - La administración configura el bloque operativo en minutos. Para el MVP se ofrecen 5, 10, 12, 15, 20, 30 y 60 minutos; el valor inicial es 10.
-- El bloque operativo alinea los inicios, las duraciones de reserva y las extensiones. Una reserva nueva dura al menos 60 minutos y después avanza por bloques; a 10 minutos, una hora ocupa seis bloques. Las extensiones van desde un bloque hasta 60 minutos y requieren aceptación del cliente.
+- La decisión original alineaba inicios, duraciones de reserva y extensiones con el bloque operativo. ADR 0008 reemplaza esa regla para reservas nuevas: sus duraciones avanzan por horas completas, mientras el bloque operativo sigue alineando inicios y extensiones. Estas últimas requieren aceptación del cliente.
 - El tablero dibuja separadores de bloque usando la configuración, mientras que los píxeles por hora siguen siendo solo escala visual y zoom.
-- Hacer clic en un espacio libre crea una reserva interna con hora precargada. Arrastrar sobre un espacio libre selecciona inicio y duración; la duración inicial mínima sigue siendo una hora. El formulario equivale a la alternativa accesible para teclado.
+- Hacer clic en un espacio libre crea una reserva interna con hora precargada. Arrastrar sobre un espacio libre selecciona inicio y duración; el formulario equivale a la alternativa accesible para teclado. ADR 0008 fija duraciones nuevas en múltiplos de una hora.
 - Una reserva futura confirmada puede moverse horizontalmente a otra hora o verticalmente a una pista objetivo. El servidor conserva duración y tamaño de grupo, busca una agrupación física que incluya la pista elegida y vuelve a validar horario, cierre, bloqueos y conflictos dentro de una transacción.
 - Si el cambio de hora altera el precio, la API entrega el nuevo total sin guardar. Recepción confirma la aceptación del cliente antes de volver a enviar la operación. Cada cambio exitoso queda auditado.
 - Un movimiento manual fija la asignación para que la reorganización automática no la cambie. La ficha de reserva permite fijarla o volverla flexible explícitamente; el check-in también la fija y no se puede retirar mientras la reserva está en curso. La reorganización automática continúa cambiando solo pistas, nunca horarios.

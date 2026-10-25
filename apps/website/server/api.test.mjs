@@ -321,12 +321,12 @@ test("HTTP API authenticates staff and serializes competing claims on the final 
       players: 72,
       laneCount: 12,
       startAt: `${blockDate}T17:00`,
-      durationMinutes: 70,
+      durationMinutes: 60,
     }),
   });
   assert.equal(blockBookingResponse.status, 201);
   const blockBooking = (await blockBookingResponse.json()).booking;
-  assert.equal(blockBooking.end - blockBooking.start, 70 * 60_000);
+  assert.equal(blockBooking.end - blockBooking.start, 60 * 60_000);
   const misalignedMaintenance = await fetch(`${base}/api/staff/blocks`, {
     method: "POST",
     headers: { "content-type": "application/json", cookie, origin: base },
@@ -342,13 +342,13 @@ test("HTTP API authenticates staff and serializes competing claims on the final 
     method: "POST",
     headers: { "content-type": "application/json", cookie },
     body: JSON.stringify({
-      idempotencyKey: "invalid-block-duration",
+      idempotencyKey: "invalid-hour-booking-duration",
       channel: "phone",
       customerName: "Duración no alineada",
       phone: "+56912345678",
       players: 4,
       startAt: `${blockDate}T20:00`,
-      durationMinutes: 65,
+      durationMinutes: 70,
     }),
   });
   assert.equal(invalidBlockDuration.status, 400);
@@ -409,7 +409,7 @@ test("HTTP API authenticates staff and serializes competing claims on the final 
   assert.equal(movedBookingResponse.status, 200);
   const movedBooking = (await movedBookingResponse.json()).booking;
   assert.equal(movedBooking.start, movedStart);
-  assert.equal(movedBooking.end - movedBooking.start, 70 * 60_000);
+  assert.equal(movedBooking.end - movedBooking.start, blockBooking.end - blockBooking.start);
   assert.equal(movedBooking.manualLaneLock, true);
   const movedBoardResponse = await fetch(`${base}/api/staff/board?date=${blockDate}`, {
     headers: { cookie },

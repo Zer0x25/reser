@@ -22,6 +22,12 @@ export const LANE_COUNT = 12;
 export const MAX_PLAYERS_PER_LANE = 6;
 export const DEFAULT_PREPARATION_MINUTES = 10;
 
+export function isWholeHourBookingDuration(durationMinutes) {
+  return (
+    Number.isSafeInteger(durationMinutes) && durationMinutes >= 60 && durationMinutes % 60 === 0
+  );
+}
+
 export function minimumLanes(players) {
   if (!Number.isInteger(players) || players < 1 || players > 72)
     throw new Error("Indica entre 1 y 72 jugadores.");
@@ -294,8 +300,8 @@ export function findAlternatives({
   const sets = laneSetsFor(players, laneCount, acceptSeparated);
   if (!sets.length)
     throw new Error("No existe una agrupación física válida para esta cantidad de pistas.");
-  if (!Number.isInteger(durationMinutes) || durationMinutes < 60)
-    throw new Error("La duración inicial debe ser de al menos una hora.");
+  if (!isWholeHourBookingDuration(durationMinutes))
+    throw new Error("Las reservas iniciales deben solicitarse en horas completas.");
   const selectedDay = parseLocalDay(date);
   const previousDate = shiftLocalDate(date, -1);
   const windows = [date, previousDate]
@@ -308,12 +314,6 @@ export function findAlternatives({
   if (!windows.length) return [];
   const stepMinutes = Number(settings.startIntervalMinutes ?? 10);
   const stepMs = stepMinutes * 60_000;
-  if (
-    !Number.isInteger(durationMinutes) ||
-    durationMinutes < 60 ||
-    durationMinutes % stepMinutes !== 0
-  )
-    throw new Error(`La duración debe usar bloques de ${stepMinutes} minutos.`);
   const startTime = localDateTimeToEpoch(`${date}T${preferredTime}`);
   const candidates = [];
   const seenStartTimes = new Set();

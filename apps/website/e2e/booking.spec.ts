@@ -138,7 +138,7 @@ test("admin can close a weekday and configure overnight hours", async ({ page, r
   }
 });
 
-test("calendar drag selects a reservation from configurable ten-minute blocks", async ({
+test("calendar drag selects whole-hour booking duration while start uses ten-minute blocks", async ({
   page,
   request,
 }) => {
@@ -183,7 +183,7 @@ test("calendar drag selects a reservation from configurable ten-minute blocks", 
 
   await expect(page.locator("#manual")).toBeVisible();
   await expect(page.locator('#manual [name="startAt"]')).toHaveValue(`${date}T17:00`);
-  await expect(page.locator('#manual [name="duration"]')).toHaveValue("70");
+  await expect(page.locator('#manual [name="duration"]')).toHaveValue("60");
 });
 
 test("reception can move a booking with the mouse and protect its lane assignment", async ({

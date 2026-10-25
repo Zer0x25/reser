@@ -265,12 +265,12 @@ test("overnight availability stays open after midnight when the next weekday is 
   );
 });
 
-test("availability accepts durations composed of configured calendar blocks", () => {
+test("availability uses whole-hour booking durations independently of start intervals", () => {
   const alternatives = findAlternatives({
     date: "2027-01-08",
     preferredTime: "18:00",
     players: 4,
-    durationMinutes: 70,
+    durationMinutes: 120,
     reservations: [],
     blocks: [],
     settings: { ...settings, startIntervalMinutes: 10 },
@@ -278,7 +278,7 @@ test("availability accepts durations composed of configured calendar blocks", ()
   });
   assert.ok(alternatives.length > 0);
   assert.equal(
-    alternatives.every((alternative) => alternative.endMs - alternative.startMs === 70 * 60_000),
+    alternatives.every((alternative) => alternative.endMs - alternative.startMs === 120 * 60_000),
     true,
   );
   assert.throws(
@@ -287,12 +287,12 @@ test("availability accepts durations composed of configured calendar blocks", ()
         date: "2027-01-08",
         preferredTime: "18:00",
         players: 4,
-        durationMinutes: 65,
+        durationMinutes: 70,
         reservations: [],
         blocks: [],
         settings: { ...settings, startIntervalMinutes: 10 },
       }),
-    /bloques de 10 minutos/,
+    /horas completas/,
   );
 });
 

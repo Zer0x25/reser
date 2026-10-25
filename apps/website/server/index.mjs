@@ -19,6 +19,7 @@ import {
   findAlternatives,
   formatLocalDate,
   formatLocalTime,
+  isWholeHourBookingDuration,
   isPhysicallyGrouped,
   localDateTimeToEpoch,
   matchesHours,
@@ -252,15 +253,8 @@ function getCandidate(startAt, data, channel = "web") {
     Number(data.players) > 72
   )
     throw new HttpError(400, "Indica entre 1 y 72 jugadores.");
-  if (
-    !Number.isSafeInteger(Number(data.durationMinutes)) ||
-    Number(data.durationMinutes) < 60 ||
-    Number(data.durationMinutes) % settings.startIntervalMinutes !== 0
-  )
-    throw new HttpError(
-      400,
-      `La duración debe ser de al menos 60 minutos y usar bloques de ${settings.startIntervalMinutes} minutos.`,
-    );
+  if (!isWholeHourBookingDuration(Number(data.durationMinutes)))
+    throw new HttpError(400, "Las reservas iniciales deben solicitarse en horas completas.");
   if (!Number.isInteger(Number(data.laneCount ?? minimumLanes(Number(data.players)))))
     throw new HttpError(400, "Cantidad de pistas inválida.");
   if (
@@ -676,6 +670,8 @@ async function handleApi(req, res, url) {
     const acceptSeparated = url.searchParams.get("acceptSeparated") === "true";
     if (!dateLimitOk(date))
       throw new HttpError(400, "Elige una fecha dentro de los próximos 60 días.");
+    if (!isWholeHourBookingDuration(durationMinutes))
+      throw new HttpError(400, "Las reservas iniciales deben solicitarse en horas completas.");
     try {
       minimumLanes(players);
     } catch (error) {

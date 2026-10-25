@@ -4,7 +4,7 @@ import {
   calendarBoundaryAtFraction,
   calendarRanges,
   calendarStartAtFraction,
-  durationOptions,
+  bookingDurationOptions,
   isWithinOperatingHours,
   shiftCalendarRange,
   visibleCalendarRange,
@@ -47,11 +47,9 @@ test("clicking the calendar selects the nearest valid interval within the operat
   expect(calendarBoundaryAtFraction(0, 25 * minute, 10 * minute, 1)).toBe(20 * minute);
 });
 
-test("booking durations divide into configurable calendar blocks", () => {
-  expect(durationOptions(10)).toEqual([
-    60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200, 210, 220, 230, 240,
-  ]);
-  expect(durationOptions(15, 15, 60)).toEqual([15, 30, 45, 60]);
+test("initial booking durations use full-hour increments", () => {
+  expect(bookingDurationOptions()).toEqual([60, 120, 180, 240]);
+  expect(bookingDurationOptions(180)).toEqual([60, 120, 180]);
 });
 
 test("manual calendar starts use the operating interval supplied by the API", () => {

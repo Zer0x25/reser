@@ -78,11 +78,7 @@ export function calendarBoundaryAtFraction(
   return Math.max(firstBoundary, Math.min(lastBoundary, nearestBoundary));
 }
 
-export function durationOptions(intervalMinutes: number, minimum = 60, maximum = 240) {
-  const interval = Math.max(1, Math.floor(intervalMinutes));
-  const first = Math.ceil(minimum / interval) * interval;
-  return Array.from(
-    { length: Math.floor((maximum - first) / interval) + 1 },
-    (_, index) => first + index * interval,
-  );
+export function bookingDurationOptions(maximumMinutes = 240) {
+  const maximumHours = Math.max(0, Math.floor(maximumMinutes / 60));
+  return Array.from({ length: maximumHours }, (_, index) => (index + 1) * 60);
 }
