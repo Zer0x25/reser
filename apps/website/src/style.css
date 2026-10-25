@@ -220,6 +220,24 @@ p {
   font-size: 21px;
   color: inherit;
 }
+.notice.has-refresh {
+  display: grid;
+  gap: 9px;
+}
+.notice button.notice-refresh {
+  position: static;
+  width: max-content;
+  max-width: 100%;
+  padding: 7px 11px;
+  border: 1px solid currentColor;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.55);
+  font-size: 12px;
+  font-weight: 700;
+}
+.notice button.notice-dismiss {
+  position: absolute;
+}
 main {
   padding: 0 clamp(18px, 5vw, 76px);
 }
@@ -617,6 +635,10 @@ main {
   justify-items: end;
   gap: 3px;
 }
+.option-price .option-price-total {
+  max-width: 260px;
+  white-space: normal;
+}
 .option-price b {
   font: 700 16px var(--serif);
   color: #183c35;
@@ -624,6 +646,17 @@ main {
 .option-price small {
   margin-top: 0;
   font-size: 9px;
+  line-height: 1.4;
+}
+.option-price .price-discount,
+.option-price .price-saving,
+.total .price-discount,
+.total .price-saving {
+  color: #3d5a4c;
+}
+.option-price .price-potential,
+.total .price-potential {
+  color: #80663e;
 }
 .option-price .option-price-total b {
   color: var(--ox-burgundy);
@@ -668,6 +701,14 @@ main {
 .total {
   text-align: right;
   min-width: 120px;
+  max-width: 260px;
+}
+.total .price-base,
+.total .price-discount,
+.total .price-saving,
+.total .price-potential {
+  margin-top: 4px;
+  line-height: 1.4;
 }
 .total b {
   display: block;
@@ -1213,7 +1254,7 @@ footer b {
 }
 .callout span {
   margin-top: 5px;
-  color: #8e7b60;
+  color: #57534f;
   font-size: 10px;
   line-height: 1.5;
 }
@@ -1655,6 +1696,14 @@ footer b {
   .option-price {
     grid-column: 2;
     text-align: left;
+    justify-content: flex-start;
+    white-space: normal;
+  }
+  .option-price > div {
+    justify-items: start;
+  }
+  .option-price .option-price-total {
+    max-width: 220px;
   }
   .option-price b {
     font-size: 14px;
@@ -1673,6 +1722,10 @@ footer b {
   }
   .request-card {
     padding: 18px 13px;
+  }
+  .total {
+    max-width: 175px;
+    min-width: 0;
   }
   .request-card .panel-title h3 {
     font-size: 18px;
@@ -3194,7 +3247,10 @@ footer {
   place-items: center;
   border-radius: 50%;
   background: #fbeaf0;
-  font-size: 12px;
+}
+.date-picker-arrow .arrow-up-right {
+  width: 11px;
+  height: 11px;
 }
 .date-picker input {
   position: absolute;
@@ -3811,6 +3867,17 @@ footer {
   background: #f5f1e9ee;
   backdrop-filter: blur(12px);
 }
+.arrow-up-right {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
 .admin-section-nav button {
   display: inline-flex;
   align-items: center;
@@ -4097,13 +4164,31 @@ footer {
   }
   .admin-section-nav {
     position: static;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
     width: 100%;
     border-radius: 10px;
+    overflow: visible;
   }
   .admin-section-nav button {
-    min-height: 38px;
-    padding: 7px 10px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 3px;
+    min-width: 0;
+    min-height: 58px;
+    padding: 6px 8px;
     font-size: 10px;
+    line-height: 1.25;
+    text-align: left;
+    white-space: normal;
+  }
+  .admin-section-nav i {
+    min-width: 0;
+    height: 18px;
+    font-size: 9px;
   }
   .admin-summary {
     grid-template-columns: 1fr 1fr;
@@ -4366,8 +4451,9 @@ footer {
   background: #fff7f9;
   box-shadow: 0 7px 16px #7c0c291c;
 }
-.venue-maps-link span:last-child {
-  font-size: 15px;
+.venue-maps-link .arrow-up-right {
+  width: 14px;
+  height: 14px;
 }
 @media (max-width: 700px) {
   .venue-strip {
@@ -4461,7 +4547,7 @@ footer {
 }
 .pricing-preview-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
   margin: 12px 0;
 }
@@ -4474,6 +4560,9 @@ footer {
 .pricing-preview-grid b {
   color: #183c35;
   font: 700 17px var(--serif);
+}
+.pricing-preview-grid span {
+  min-width: 0;
 }
 .pricing-preview small {
   display: block;

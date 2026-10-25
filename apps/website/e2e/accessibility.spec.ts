@@ -82,11 +82,7 @@ test("admin workspace meets automated WCAG checks across sections", async ({ pag
     .getByRole("navigation", { name: "Secciones de administración" })
     .getByRole("button", { name: /Precio dinámico/ })
     .click();
-  // This one known contrast issue is tracked in docs/backlog.md; keep scanning the rest of the panel.
-  const dynamicPricing = await new AxeBuilder({ page })
-    .withTags(wcagTags)
-    .exclude('.admin-section[data-admin-panel="pricing"] .callout > span')
-    .analyze();
+  const dynamicPricing = await new AxeBuilder({ page }).withTags(wcagTags).analyze();
   expect(violationSummary(dynamicPricing.violations)).toBe("");
 });
 

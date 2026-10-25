@@ -20,22 +20,9 @@ import {
 
 type DynamicQuote = {
   applied: boolean;
-  shadow?: boolean;
-  reason?: string | null;
-  reasonCode?: string | null;
   discountClp: number;
   potentialDiscountClp: number;
   totalAfterDiscountClp?: number;
-  discountPercent?: number;
-  riskPoints?: number | null;
-  configVersion?: number | null;
-  signals?: {
-    occupancyPercent?: number | null;
-    leadTimeHours?: number | null;
-    gapRisk?: boolean;
-    futureValueRisk?: boolean;
-    [key: string]: unknown;
-  };
 };
 type Option = {
   startAt: string;
@@ -74,6 +61,7 @@ const appPaths = {
   admin: `${appBasePath}/admin`,
 };
 const venueMapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent("Playa La Gaviota 2225, Iquique, Chile")}`;
+const arrowUpRightIcon = `<svg class="arrow-up-right" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M4.5 11.5 11.5 4.5M5 4.5h6.5V11"></path></svg>`;
 const staffEntry = routeMatch ? (routeMatch[2] === "recepcion" ? "reception" : "admin") : null;
 const days = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
 function randomIdempotencyKey() {
@@ -106,6 +94,7 @@ const state: any = {
   options: [] as Option[],
   loading: false,
   availabilitySearched: false,
+  quoteExpired: false,
   selected: null as Option | null,
   requestName: "",
   requestEmail: "",
@@ -157,6 +146,23 @@ function money(n: number) {
     currency: "CLP",
     maximumFractionDigits: 0,
   }).format(n);
+}
+function quotePriceBreakdown(quote: Option["quote"]) {
+  const discountLabel =
+    quote.pricingSource === "dynamic"
+      ? "Precio dinámico"
+      : quote.pricingSource === "promotion"
+        ? `Promoción${quote.promotionName ? ` · ${esc(quote.promotionName)}` : ""}`
+        : "Descuento";
+  const appliedDiscount =
+    quote.discountClp > 0
+      ? `<small class="price-discount">Descuento aplicado · ${discountLabel}: ${money(quote.discountClp)}</small><small class="price-saving">Ahorro ${money(quote.discountClp)}</small>`
+      : `<small class="price-discount">Sin descuento aplicado</small>`;
+  const dynamicPotential =
+    quote.dynamic && !quote.dynamic.applied && quote.dynamic.potentialDiscountClp > 0
+      ? `<small class="price-potential">Precio potencial dinámico (no aplicado): ${money(quote.dynamic.totalAfterDiscountClp ?? quote.baseClp - quote.dynamic.potentialDiscountClp)} · ahorro potencial ${money(quote.dynamic.potentialDiscountClp)}</small>`
+      : "";
+  return `<small class="price-base">Catálogo ${money(quote.baseClp)}</small>${appliedDiscount}${dynamicPotential}`;
 }
 function durationLabel(minutes: number) {
   const hours = Math.floor(minutes / 60);
@@ -283,7 +289,7 @@ async function moveBooking(
 }
 function notice() {
   return state.message
-    ? `<div class="notice ${state.kind}" role="status" tabindex="-1">${esc(state.message)}<button data-action="clear" aria-label="Cerrar aviso">×</button></div>`
+    ? `<div class="notice ${state.kind} ${state.quoteExpired ? "has-refresh" : ""}" role="status" tabindex="-1"><span>${esc(state.message)}</span>${state.quoteExpired ? `<button type="button" class="notice-refresh" data-action="refresh-availability">Actualizar horarios y precios</button>` : ""}<button type="button" class="notice-dismiss" data-action="clear" aria-label="Cerrar aviso">×</button></div>`
     : "";
 }
 function demo() {
@@ -323,7 +329,7 @@ function renderBook() {
     .join("");
   const content = `<section class="booking-layout"><div class="booking-intro"><div class="booking-intro-copy"><span class="eyebrow">✳ RESERVAS EN BOWLING ESPACIO OX</span><h1>Arma el plan.<br><em>La pista te espera.</em></h1><p>Encuentra el horario perfecto para tu grupo. Nosotros preparamos las pistas.</p><div class="hero-facts"><span><b>Máximo 6</b> jugadores por pista</span></div></div><div class="hero-visual" aria-hidden="true"><span class="glow"></span><div class="bowling-lane"><i></i><i></i></div><div class="hero-pins"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><img class="bowling-mascot" src="/images/bowling-mascot.png" alt=""><div class="rolling-ball"><i></i><i></i><i></i></div><span class="hero-sparkle sparkle-a">✦</span><span class="hero-sparkle sparkle-b">✦</span><div class="art-brand">● ESPACIO OX</div><div class="art-caption"><b>El plan perfecto<br>para compartir</b></div></div></div>
   <section class="booking-card"><div class="booking-heading"><div><span class="eyebrow">01 · PLANIFICA TU VISITA</span><h2>¿Cuándo jugamos?</h2><p>Elige el día y cuéntanos cómo viene tu grupo.</p></div><div class="steps" aria-label="Pasos de la reserva"><b>1</b> Busca <i></i><b>2</b> Elige <i></i><b>3</b> Confirma</div></div>
-  <form id="search" class="search-grid"><div class="date-picker-block"><div class="date-picker-heading"><span>Elige un día <small>${monthYear(state.date)}</small></span><label class="date-picker"><svg class="date-picker-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15" rx="2.5"></rect><path d="M7.5 3.5v3M16.5 3.5v3M3.5 9.5h17"></path></svg><span>Otra fecha</span><span class="date-picker-arrow" aria-hidden="true">↗</span><input name="date" type="date" min="${today}" max="${maxDate}" value="${esc(state.date)}" required aria-label="Elegir otra fecha"></label></div><div class="date-strip" role="group" aria-label="Próximos días"><button type="button" class="date-week-nav" data-action="date-week" data-direction="previous" aria-label="Ver semana anterior" ${windowStart <= today ? "disabled" : ""}>‹</button>${dateButtons}<button type="button" class="date-week-nav" data-action="date-week" data-direction="next" aria-label="Ver semana siguiente" ${windowStart >= lastDateWindowStart ? "disabled" : ""}>›</button></div></div><label>Hora preferida<input name="time" type="time" step="${(state.config?.startIntervalMinutes ?? 10) * 60}" value="${esc(state.time)}" required></label><label>Jugadores<div class="player-stepper"><button type="button" data-action="players-adjust" data-step="-1" aria-label="Quitar un jugador" ${state.players <= 1 ? "disabled" : ""}>−</button><input name="players" type="number" min="1" max="72" value="${state.players}" required aria-label="Cantidad de jugadores"><button type="button" data-action="players-adjust" data-step="1" aria-label="Agregar un jugador" ${state.players >= 72 ? "disabled" : ""}>＋</button></div></label><label>Tiempo de juego<select name="duration">${bookingDurationOptions()
+  <form id="search" class="search-grid"><div class="date-picker-block"><div class="date-picker-heading"><span>Elige un día <small>${monthYear(state.date)}</small></span><label class="date-picker"><svg class="date-picker-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15" rx="2.5"></rect><path d="M7.5 3.5v3M16.5 3.5v3M3.5 9.5h17"></path></svg><span>Otra fecha</span><span class="date-picker-arrow">${arrowUpRightIcon}</span><input name="date" type="date" min="${today}" max="${maxDate}" value="${esc(state.date)}" required aria-label="Elegir otra fecha"></label></div><div class="date-strip" role="group" aria-label="Próximos días"><button type="button" class="date-week-nav" data-action="date-week" data-direction="previous" aria-label="Ver semana anterior" ${windowStart <= today ? "disabled" : ""}>‹</button>${dateButtons}<button type="button" class="date-week-nav" data-action="date-week" data-direction="next" aria-label="Ver semana siguiente" ${windowStart >= lastDateWindowStart ? "disabled" : ""}>›</button></div></div><label>Hora preferida<input name="time" type="time" step="${(state.config?.startIntervalMinutes ?? 10) * 60}" value="${esc(state.time)}" required></label><label>Jugadores<div class="player-stepper"><button type="button" data-action="players-adjust" data-step="-1" aria-label="Quitar un jugador" ${state.players <= 1 ? "disabled" : ""}>−</button><input name="players" type="number" min="1" max="72" value="${state.players}" required aria-label="Cantidad de jugadores"><button type="button" data-action="players-adjust" data-step="1" aria-label="Agregar un jugador" ${state.players >= 72 ? "disabled" : ""}>＋</button></div></label><label>Tiempo de juego<select name="duration">${bookingDurationOptions()
     .map(
       (n) =>
         `<option value="${n}" ${state.duration === n ? "selected" : ""}>${durationLabel(n)}</option>`,
@@ -332,7 +338,7 @@ function renderBook() {
       "",
     )}</select></label><button class="button primary search-button" ${state.loading ? "disabled" : ""}>${state.loading ? "Buscando horarios…" : "Buscar horarios →"}</button>${state.players > 12 ? `<label class="check-row"><input name="separated" type="checkbox" ${state.separated ? "checked" : ""}> Acepto pistas separadas si no hay un grupo contiguo.</label>` : ""}</form>
   ${state.options.length ? renderOptions() : ""}${state.availabilitySearched && !state.options.length && !state.selected && !state.result ? renderEmptyAvailability() : ""}${state.selected ? renderRequestForm() : ""}${state.result ? renderResult() : ""}</section></section>
-  <section class="how"><div><span class="eyebrow">ASÍ DE FÁCIL</span><h2>Menos coordinar.<br><em>Más jugar.</em></h2></div><div class="how-cards"><article><b>01</b><span>⌕</span><h3>Busca</h3><p>Indica el día, hora ideal y tamaño del grupo.</p></article><article><b>02</b><span>◷</span><h3>Compara</h3><p>Revisa horarios y precios antes de decidir.</p></article><article><b>03</b><span>↗</span><h3>Confirma</h3><p>Verifica tu correo y sigue tu reserva con un enlace privado.</p></article></div></section><section class="venue-strip" aria-label="Ubicación del local"><a class="venue-map-card" href="${venueMapsUrl}" target="_blank" rel="noopener noreferrer" aria-label="Abrir Playa La Gaviota 2225, Iquique en Google Maps"><span class="venue-map-road road-one"></span><span class="venue-map-road road-two"></span><span class="venue-map-road road-three"></span><span class="venue-map-block block-one"></span><span class="venue-map-block block-two"></span><span class="venue-map-pin" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20 10c0 5-8 11-8 11S4 15 4 10a8 8 0 1 1 16 0Z"></path><circle cx="12" cy="10" r="2.5"></circle></svg></span><span class="venue-map-label">IQUIQUE</span></a><div class="venue-address"><span class="venue-kicker">VISÍTANOS</span><b>Playa La Gaviota 2225</b><small>Iquique, Chile</small></div><a class="venue-maps-link" href="${venueMapsUrl}" target="_blank" rel="noopener noreferrer"><span>Abrir Google Maps</span><span aria-hidden="true">↗</span></a></section>`;
+  <section class="how"><div><span class="eyebrow">ASÍ DE FÁCIL</span><h2>Menos coordinar.<br><em>Más jugar.</em></h2></div><div class="how-cards"><article><b>01</b><span>⌕</span><h3>Busca</h3><p>Indica el día, hora ideal y tamaño del grupo.</p></article><article><b>02</b><span>◷</span><h3>Compara</h3><p>Revisa horarios y precios antes de decidir.</p></article><article><b>03</b><span>${arrowUpRightIcon}</span><h3>Confirma</h3><p>Verifica tu correo y sigue tu reserva con un enlace privado.</p></article></div></section><section class="venue-strip" aria-label="Ubicación del local"><a class="venue-map-card" href="${venueMapsUrl}" target="_blank" rel="noopener noreferrer" aria-label="Abrir Playa La Gaviota 2225, Iquique en Google Maps"><span class="venue-map-road road-one"></span><span class="venue-map-road road-two"></span><span class="venue-map-road road-three"></span><span class="venue-map-block block-one"></span><span class="venue-map-block block-two"></span><span class="venue-map-pin" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20 10c0 5-8 11-8 11S4 15 4 10a8 8 0 1 1 16 0Z"></path><circle cx="12" cy="10" r="2.5"></circle></svg></span><span class="venue-map-label">IQUIQUE</span></a><div class="venue-address"><span class="venue-kicker">VISÍTANOS</span><b>Playa La Gaviota 2225</b><small>Iquique, Chile</small></div><a class="venue-maps-link" href="${venueMapsUrl}" target="_blank" rel="noopener noreferrer"><span>Abrir Google Maps</span><span>${arrowUpRightIcon}</span></a></section>`;
   shell(content);
 }
 function renderOptions() {
@@ -358,14 +364,12 @@ function renderOptions() {
           ? "Una pista para tu grupo"
           : `${laneLabel} ${o.grouped ? "contiguas" : "separadas"} para tu grupo`;
       const priceConfigured = state.config?.rateConfigured || state.config?.demoMode;
-      const hasDiscount = o.quote.discountClp > 0 && o.quote.totalClp < o.quote.baseClp;
-      const benefit = o.quote.promotionName
-        ? `<small class="promo">${esc(o.quote.promotionName)} aplicado</small>`
-        : o.quote.dynamic?.applied
-          ? `<small class="promo dynamic">Precio especial · ${esc(o.quote.dynamic.reason ?? "Baja demanda")}</small>`
+      const benefit =
+        o.quote.discountClp > 0
+          ? `<small class="promo">${o.quote.pricingSource === "dynamic" ? "Precio dinámico aplicado" : esc(o.quote.promotionName ?? "Promoción aplicada")}</small>`
           : "";
       const priceDetails = priceConfigured
-        ? `<div><small>${o.laneCount === 1 ? "Por pista" : "Promedio por pista"}</small><b>${money(Math.round(o.quote.totalClp / o.laneCount))}</b></div><div class="option-price-total"><small>Total · ${laneLabel} · ${durationLabel(o.durationMinutes)}</small>${hasDiscount ? `<small class="price-base">Antes ${money(o.quote.baseClp)}</small>` : ""}<b>${money(o.quote.totalClp)}</b></div>`
+        ? `<div><small>${o.laneCount === 1 ? "Por pista" : "Promedio por pista"}</small><b>${money(Math.round(o.quote.totalClp / o.laneCount))}</b></div><div class="option-price-total"><small>Total · ${laneLabel} · ${durationLabel(o.durationMinutes)}</small>${quotePriceBreakdown(o.quote)}<b>${money(o.quote.totalClp)}</b></div>`
         : `<div class="option-price-total"><small>Total · ${laneLabel} · ${durationLabel(o.durationMinutes)}</small><b>Tarifa por configurar</b></div>`;
       return `<article class="option-card ${chosen ? "chosen" : ""}"><div class="option-time"><b>${esc(o.startTime)}</b><small>${esc(o.endTime)} término</small>${repeatedTimes.has(o.startTime) && o.utcOffset ? `<small>${esc(o.utcOffset)}</small>` : ""}</div><div class="option-info"><div><span class="tag ${o.recommended ? "green" : ""}">${o.recommended ? "Recomendado" : tag}</span><span class="tag">${durationLabel(o.durationMinutes)}</span>${o.quote.dynamic?.applied ? `<span class="tag green">Precio especial</span>` : ""}</div><p>${pisteDescription}</p>${benefit}</div><div class="option-price">${priceDetails}</div><button class="button ${chosen ? "chosen-button" : "outline"}" data-action="select" data-start="${o.startMs}">${chosen ? "Elegido ✓" : "Elegir"}</button></article>`;
     })
@@ -381,14 +385,12 @@ function renderRequestForm() {
     state.options.filter((option: Option) => option.startAt === o.startAt).length > 1
       ? ` · ${o.utcOffset}`
       : "";
-  const hasDiscount = o.quote.discountClp > 0 && o.quote.totalClp < o.quote.baseClp;
-  const benefit = o.quote.promotionName
-    ? `<small class="promo">${esc(o.quote.promotionName)} aplicado</small>`
-    : o.quote.dynamic?.applied
-      ? `<small class="promo dynamic">${esc(o.quote.dynamic.reason ?? "Precio especial por baja demanda")}</small>`
+  const benefit =
+    o.quote.discountClp > 0
+      ? `<small class="promo">${o.quote.pricingSource === "dynamic" ? "Precio dinámico aplicado" : esc(o.quote.promotionName ?? "Promoción aplicada")}</small>`
       : "";
   const total = priceConfigured
-    ? `${hasDiscount ? `<small class="price-base">Antes ${money(o.quote.baseClp)}</small>` : ""}<b>${money(o.quote.totalClp)}</b>`
+    ? `${quotePriceBreakdown(o.quote)}<b>${money(o.quote.totalClp)}</b>`
     : `<b>Por configurar</b>`;
   return `<section class="request-card"><button class="close" data-action="clear-selection" aria-label="Cerrar">×</button><div class="panel-title"><div><span class="eyebrow">TU OPCIÓN ELEGIDA</span><h3>${esc(o.startTime)}${esc(offset)} — ${esc(o.endTime)}</h3><p>${o.laneCount} ${o.laneCount === 1 ? "pista" : "pistas"} · ${state.duration / 60} h · ${state.players} jugadores</p></div><div class="total"><small>Total</small>${total}${benefit}<small>${state.config?.demoMode ? "precio ilustrativo" : "CLP"}</small></div></div><form id="request"><div class="two-fields"><label>Nombre del responsable<input name="name" autocomplete="name" required maxlength="120" value="${esc(state.requestName)}" placeholder="Tu nombre"></label><label>Correo electrónico<input name="email" type="email" autocomplete="email" required value="${esc(state.requestEmail || state.verifiedEmail)}" placeholder="nombre@correo.cl"></label></div><div class="verify-row"><span>✉ <b>Verifica tu correo</b><small>Enviamos un código de seis dígitos. Todavía no retenemos pistas.</small></span><button type="button" class="button outline" data-action="send-code">Enviar código</button></div><div class="code-row"><label>Código de verificación<input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" value="${esc(state.verificationCode)}" placeholder="000000" ${state.proof ? "disabled" : ""}></label><button type="button" class="button outline" data-action="verify" ${state.proof ? "disabled" : ""}>${state.proof ? "Correo verificado ✓" : "Verificar correo"}</button></div>${state.proof ? `<p class="verified">✓ Correo verificado para ${esc(state.verifiedEmail)}. Comprobaremos disponibilidad al enviar.</p>` : ""}${!priceConfigured ? `<p class="verified">Recepción debe configurar una tarifa antes de aceptar reservas.</p>` : ""}<p class="quote-lock">Precio válido hasta las ${esc(time(o.quoteExpiresAt))}. Las pistas se confirman al enviar la solicitud; si el horario se ocupa, te mostraremos alternativas.</p><label class="accept"><input name="terms" type="checkbox" ${state.requestTermsAccepted ? "checked" : ""} required><span>Acepto la tarifa, el horario y las condiciones. Un grupo grande puede requerir aprobación de recepción.</span></label><button class="button primary submit" ${state.proof && priceConfigured ? "" : "disabled"}>${o.laneCount >= 3 ? "Solicitar aprobación" : "Reservar este horario"} →</button><small class="privacy">🔒 Sin cuenta. El enlace de seguimiento solo da acceso a esta reserva.</small></form></section>`;
 }
@@ -751,6 +753,7 @@ app.addEventListener("submit", async (event) => {
   if (!form) return;
   event.preventDefault();
   state.message = "";
+  state.quoteExpired = false;
   const d = new FormData(form);
   const v = (n: string) => fieldValue(d.get(n));
   try {
@@ -1158,6 +1161,7 @@ app.addEventListener("submit", async (event) => {
       state.selected = null;
       state.options = [];
       state.availabilitySearched = false;
+      state.quoteExpired = (e as any)?.code === "quote_expired";
     }
     say(errorMessage(e), "error");
     render();
@@ -1524,7 +1528,13 @@ app.addEventListener("click", async (event) => {
     }
     if (action === "clear") {
       state.message = "";
+      state.quoteExpired = false;
       render();
+      return;
+    }
+    if (action === "refresh-availability") {
+      document.querySelector<HTMLFormElement>("#search")?.requestSubmit();
+      return;
     }
     if (action === "nav") {
       if (target.dataset.view === "staff") {
