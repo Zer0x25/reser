@@ -106,6 +106,7 @@ const state: any = {
   options: [] as Option[],
   loading: false,
   availabilitySearched: false,
+  quoteExpired: false,
   selected: null as Option | null,
   requestName: "",
   requestEmail: "",
@@ -283,7 +284,7 @@ async function moveBooking(
 }
 function notice() {
   return state.message
-    ? `<div class="notice ${state.kind}" role="status" tabindex="-1">${esc(state.message)}<button data-action="clear" aria-label="Cerrar aviso">×</button></div>`
+    ? `<div class="notice ${state.kind} ${state.quoteExpired ? "has-refresh" : ""}" role="status" tabindex="-1"><span>${esc(state.message)}</span>${state.quoteExpired ? `<button type="button" class="notice-refresh" data-action="refresh-availability">Actualizar horarios y precios</button>` : ""}<button type="button" class="notice-dismiss" data-action="clear" aria-label="Cerrar aviso">×</button></div>`
     : "";
 }
 function demo() {
@@ -751,6 +752,7 @@ app.addEventListener("submit", async (event) => {
   if (!form) return;
   event.preventDefault();
   state.message = "";
+  state.quoteExpired = false;
   const d = new FormData(form);
   const v = (n: string) => fieldValue(d.get(n));
   try {
@@ -1158,6 +1160,7 @@ app.addEventListener("submit", async (event) => {
       state.selected = null;
       state.options = [];
       state.availabilitySearched = false;
+      state.quoteExpired = (e as any)?.code === "quote_expired";
     }
     say(errorMessage(e), "error");
     render();
@@ -1524,7 +1527,13 @@ app.addEventListener("click", async (event) => {
     }
     if (action === "clear") {
       state.message = "";
+      state.quoteExpired = false;
       render();
+      return;
+    }
+    if (action === "refresh-availability") {
+      document.querySelector<HTMLFormElement>("#search")?.requestSubmit();
+      return;
     }
     if (action === "nav") {
       if (target.dataset.view === "staff") {
