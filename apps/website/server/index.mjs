@@ -43,6 +43,7 @@ import {
   saveSettings,
   transaction,
 } from "./db.mjs";
+import { summarizePricingPerformance } from "./pricing-performance.mjs";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 const port = Number(process.env.PORT ?? 3001);
@@ -2621,6 +2622,26 @@ async function handleApi(req, res, url) {
       addAudit(actor, "maintenance_block_released", "maintenance_block", id, {});
     });
     return json(res, 200, { ok: true });
+  }
+  if (method === "GET" && path === "/api/staff/pricing/performance") {
+    requireActor(req, ["admin"]);
+    const windowDays = Number(url.searchParams.get("days") ?? 30);
+    if (![7, 30, 90].includes(windowDays))
+      throw new HttpError(400, "El período debe ser de 7, 30 o 90 días.");
+    const to = Date.now();
+    const from = to - windowDays * 24 * 60 * 60_000;
+    const rows = db
+      .prepare(
+        `SELECT channel,commercial_status AS commercialStatus,quote_clp AS quoteClp,quote_json AS quoteJson
+         FROM reservations WHERE created_at>=? AND created_at<? ORDER BY created_at DESC`,
+      )
+      .all(from, to);
+    return json(res, 200, {
+      windowDays,
+      from,
+      to,
+      ...summarizePricingPerformance(rows),
+    });
   }
   if (method === "POST" && path === "/api/staff/pricing/preview") {
     requireActor(req, ["admin"]);

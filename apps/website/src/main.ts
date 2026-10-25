@@ -122,6 +122,8 @@ const state: any = {
   audit: [],
   outbox: [],
   pricingPreview: null,
+  pricingPerformance: null,
+  pricingPerformanceDays: 30,
   message: "",
   kind: "",
   modal: null,
@@ -654,14 +656,22 @@ async function loadStaff(date = state.board?.date ?? localDate(Date.now())) {
   if (state.view === "staff") render();
 }
 async function loadAdmin() {
-  const [settings, audit, outbox] = await Promise.all([
+  const [settings, audit, outbox, pricingPerformance] = await Promise.all([
     api("/api/staff/settings"),
     api("/api/staff/audit"),
     api<any>("/api/staff/emails"),
+    api<any>(`/api/staff/pricing/performance?days=${state.pricingPerformanceDays}`),
   ]);
   state.settings = settings;
   state.audit = audit.events;
   state.outbox = outbox.emails;
+  state.pricingPerformance = pricingPerformance;
+  render();
+}
+async function loadPricingPerformance() {
+  state.pricingPerformance = await api<any>(
+    `/api/staff/pricing/performance?days=${state.pricingPerformanceDays}`,
+  );
   render();
 }
 function dynamicConfigFromForm(form: HTMLFormElement | null) {
@@ -1213,6 +1223,16 @@ app.addEventListener("change", (event) => {
   if (input.form?.id === "request" && input.name === "terms")
     state.requestTermsAccepted = input.checked;
   if (input.name === "board-date") void loadStaff(input.value);
+  if (input.name === "pricingPerformanceDays") {
+    const days = Number(input.value);
+    if ([7, 30, 90].includes(days)) {
+      state.pricingPerformanceDays = days;
+      void loadPricingPerformance().catch((error) => {
+        say(errorMessage(error), "error");
+        render();
+      });
+    }
+  }
   if (input.name === "startAt") {
     const exactStart = document.querySelector<HTMLInputElement>('#manual [name="startMs"]');
     state.manualStartAt = input.value;

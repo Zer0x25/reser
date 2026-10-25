@@ -119,6 +119,7 @@ La producción empieza cerrada si no hay horarios, tarifas, cuenta de administra
 
 ## Límites conocidos
 
+- Administración resume reservas con precio dinámico y descuentos registrados por canal. No mide búsquedas sin reserva ni permite atribuir ingresos incrementales.
 - La interfaz principal todavía mantiene varias vistas y su estado en `main.ts`; la separación actual es incremental.
 - E2E ya cubre aprobación, cambio y aceptación de precio, renovación/cancelación, reserva presencial, check-in y extensión. Aún faltan flujos de modificación, abuso, incidencias de pista y pagos más completos descritos en la especificación.
 - La estrategia local no verifica una URL desplegada; tampoco hay pruebas manuales con lector de pantalla o instrumentación global de cobertura.

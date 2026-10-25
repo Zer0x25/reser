@@ -4,6 +4,8 @@ type AdminRenderState = {
   audit: any[];
   outbox: any[];
   pricingPreview?: any;
+  pricingPerformance?: any;
+  pricingPerformanceDays?: number;
 };
 
 const dynamicModeLabels: Record<string, string> = {
@@ -25,6 +27,22 @@ const dynamicChannelLabels: Record<string, string> = {
   walk_in: "Presencial inmediata",
   counter_future: "Presencial futura",
 };
+
+function renderPricingPerformance(
+  performance: any,
+  selectedDays: number,
+  esc: (value: string | number | boolean | null | undefined) => string,
+  money: (amount: number) => string,
+) {
+  const windowDays = [7, 30, 90].includes(Number(selectedDays)) ? Number(selectedDays) : 30;
+  const totals = performance?.totals;
+  const channels = Array.isArray(performance?.byChannel) ? performance.byChannel : [];
+  return `<div class="plain-card pricing-performance" aria-labelledby="pricing-performance-title"><div class="panel-title"><div><h2 id="pricing-performance-title">Resultados del piloto</h2><p>Precios guardados según la fecha de creación de la reserva.</p></div><label class="pricing-period">Período<select name="pricingPerformanceDays"><option value="7" ${windowDays === 7 ? "selected" : ""}>7 días</option><option value="30" ${windowDays === 30 ? "selected" : ""}>30 días</option><option value="90" ${windowDays === 90 ? "selected" : ""}>90 días</option></select></label></div>${
+    totals
+      ? `<div class="pricing-performance-metrics" aria-live="polite"><article><small>Reservas registradas</small><b>${totals.reservationCount}</b><span>${totals.pendingCount} pendientes · ${totals.cancelledCount} canceladas o rechazadas</span></article><article><small>Con descuento dinámico</small><b>${totals.dynamicAppliedCount}</b><span>Reservas no canceladas</span></article><article><small>Importe cotizado con dinámico</small><b>${money(totals.dynamicQuoteTotalClp)}</b><span>Precio final de esas reservas</span></article><article><small>Descuento dinámico registrado</small><b>${money(totals.dynamicDiscountCommittedClp)}</b><span>Incluye pendientes; excluye cancelaciones y rechazos</span></article><article><small>Potencial dinámico no aplicado</small><b>${money(totals.dynamicPotentialNotAppliedClp)}</b><span>Por sombra o por una promoción mayor</span></article></div>${channels.length ? `<div class="pricing-performance-table-wrap"><table class="pricing-performance-table"><caption>Resultados por canal</caption><thead><tr><th scope="col">Canal</th><th scope="col">Reservas</th><th scope="col">Con dinámico</th><th scope="col">Descuento</th></tr></thead><tbody>${channels.map((item: any) => `<tr><th scope="row">${esc(dynamicChannelLabels[item.channel] ?? item.channel)}</th><td>${item.reservationCount}</td><td>${item.dynamicAppliedCount}</td><td>${money(item.dynamicDiscountCommittedClp)}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted">No hay reservas creadas en este período.</p>`}<p class="pricing-performance-note">Incluye cotizaciones que ya generaron una solicitud o reserva. No cuenta búsquedas sin reserva ni estima ingresos incrementales. Las reservas pendientes se incluyen; los importes excluyen canceladas y rechazadas.</p>`
+      : `<p class="muted" role="status">Cargando resultados…</p>`
+  }</div>`;
+}
 
 export function renderAdminView(
   state: AdminRenderState,
@@ -95,6 +113,12 @@ export function renderAdminView(
     preview?.quote?.discountClp > 0
       ? `${preview.quote.pricingSource === "dynamic" ? "Precio dinámico" : (preview.quote.promotionName ?? "Promoción")} · ${money(preview.quote.discountClp)}`
       : "Ninguno";
+  const performanceHtml = renderPricingPerformance(
+    state.pricingPerformance,
+    Number(state.pricingPerformanceDays ?? 30),
+    esc,
+    money,
+  );
   const previewHtml = preview
     ? preview.available === false
       ? `<div class="pricing-preview"><b>Sin disponibilidad</b><p>${esc(preview.message ?? "No hay una agrupación libre para ese horario y grupo.")}</p></div>`
@@ -128,5 +152,9 @@ export function renderAdminView(
           .join("")
       : `<div class="empty compact-empty"><b>✓</b><p>Aún no hay eventos.</p></div>`
   }</div><div class="callout"><b>Reglas financieras pendientes</b><span>No se inventan importes de penalización, ausencias, anticipos o compensaciones. Requieren definición del establecimiento.</span></div></section>`;
-  return `<section class="admin-view">${sectionNav}${summary}<div class="admin-panels">${generalPanel}${ratesPanel}${dynamicPanel}${teamPanel}${activityPanel}</div></section>`;
+  const dynamicPanelWithPerformance = dynamicPanel.replace(
+    "</section>",
+    `${performanceHtml}</section>`,
+  );
+  return `<section class="admin-view">${sectionNav}${summary}<div class="admin-panels">${generalPanel}${ratesPanel}${dynamicPanelWithPerformance}${teamPanel}${activityPanel}</div></section>`;
 }

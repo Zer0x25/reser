@@ -137,6 +137,26 @@ test("customer sees and books an eligible dynamic price", async ({ page, request
     await page.goto(manageLink!);
     await expect(page.locator(".manage-grid")).toContainText("$9.600");
     await expect(page.locator(".manage-grid")).toContainText("Base $12.000 · descuento $2.400");
+
+    await page.goto("/admin");
+    await page.locator('#login [name="email"]').fill("admin@demo.local");
+    await page.locator('#login [name="password"]').fill("BowlingDemo2026!");
+    await page.getByRole("button", { name: "Ingresar →" }).click();
+    const adminNav = page.getByRole("navigation", { name: "Secciones de administración" });
+    await adminNav.getByRole("button", { name: /Precio dinámico/ }).click();
+    const performance = page.locator(".pricing-performance");
+    await expect(performance).toContainText("Resultados del piloto");
+    await expect(performance.locator(".pricing-performance-metrics article").nth(1)).toContainText(
+      "1",
+    );
+    await expect(performance.locator(".pricing-performance-metrics article").nth(3)).toContainText(
+      "$2.400",
+    );
+    await performance.locator('[name="pricingPerformanceDays"]').selectOption("7");
+    await expect(performance.locator('[name="pricingPerformanceDays"]')).toHaveValue("7");
+    await expect(performance.locator(".pricing-performance-metrics article").nth(3)).toContainText(
+      "$2.400",
+    );
   } finally {
     await restoreDynamicPricing(request, headers, originalDynamicPricing);
   }
