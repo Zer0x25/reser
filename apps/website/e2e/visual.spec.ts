@@ -1,4 +1,4 @@
-import { expect, test } from "./fixtures.js";
+import { expect, test, type Page } from "./fixtures.js";
 
 function addDays(date: string, days: number) {
   const [year, month, day] = date.split("-").map(Number);
@@ -81,8 +81,78 @@ test("@visual public booking screens match mobile visual baselines", async ({ pa
   });
 });
 
-test("@visual admin workspace keeps settings focused on desktop and mobile", async ({ page }) => {
+async function openAdmin(page: Page) {
   await page.goto("/admin");
+  await page.route("**/api/staff/pricing/performance**", (route) =>
+    route.fulfill({
+      status: 200,
+      json: {
+        windowDays: 30,
+        from: 0,
+        to: 0,
+        totals: {
+          reservationCount: 8,
+          confirmedCount: 5,
+          pendingCount: 1,
+          cancelledCount: 2,
+          dynamicAppliedCount: 2,
+          dynamicDiscountCommittedClp: 4_800,
+          dynamicQuoteTotalClp: 19_200,
+          dynamicPotentialNotAppliedCount: 1,
+          dynamicPotentialNotAppliedClp: 1_200,
+        },
+        byChannel: [
+          {
+            channel: "web",
+            reservationCount: 6,
+            confirmedCount: 4,
+            pendingCount: 1,
+            cancelledCount: 1,
+            dynamicAppliedCount: 2,
+            dynamicDiscountCommittedClp: 4_800,
+            dynamicQuoteTotalClp: 19_200,
+            dynamicPotentialNotAppliedCount: 1,
+            dynamicPotentialNotAppliedClp: 1_200,
+          },
+          {
+            channel: "phone",
+            reservationCount: 2,
+            confirmedCount: 1,
+            pendingCount: 0,
+            cancelledCount: 1,
+            dynamicAppliedCount: 0,
+            dynamicDiscountCommittedClp: 0,
+            dynamicQuoteTotalClp: 0,
+            dynamicPotentialNotAppliedCount: 0,
+            dynamicPotentialNotAppliedClp: 0,
+          },
+        ],
+        funnel: {
+          totals: { offeredCount: 44, selectedCount: 12, reservedCount: 8 },
+          byPricingGroup: [
+            {
+              pricingGroup: "dynamic_applied",
+              offeredCount: 10,
+              selectedCount: 4,
+              reservedCount: 3,
+            },
+            {
+              pricingGroup: "dynamic_potential",
+              offeredCount: 8,
+              selectedCount: 1,
+              reservedCount: 0,
+            },
+            {
+              pricingGroup: "standard",
+              offeredCount: 26,
+              selectedCount: 7,
+              reservedCount: 5,
+            },
+          ],
+        },
+      },
+    }),
+  );
   await page.route("**/api/staff/settings", async (route) => {
     if (route.request().method() !== "GET") return route.continue();
     const response = await route.fetch();
@@ -93,13 +163,18 @@ test("@visual admin workspace keeps settings focused on desktop and mobile", asy
   await page.locator('#login [name="email"]').fill("admin@demo.local");
   await page.locator('#login [name="password"]').fill("BowlingDemo2026!");
   await page.getByRole("button", { name: "Ingresar →" }).click();
-  await expect(page.getByRole("navigation", { name: "Secciones de administración" })).toBeVisible();
+  const nav = page.getByRole("navigation", { name: "Secciones de administración" });
+  await expect(nav).toBeVisible();
+  return nav;
+}
+
+test("@visual admin workspace keeps settings focused on desktop and mobile", async ({ page }) => {
+  const nav = await openAdmin(page);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await expect(page.locator(".admin-view")).toHaveScreenshot("admin-operation-desktop.png", {
     animations: "disabled",
   });
 
-  const nav = page.getByRole("navigation", { name: "Secciones de administración" });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator(".admin-view")).toHaveScreenshot("admin-operation-mobile.png", {
     animations: "disabled",
@@ -126,17 +201,36 @@ test("@visual admin workspace keeps settings focused on desktop and mobile", asy
   expect(navLayout.scrollWidth).toBe(navLayout.clientWidth);
   expect(navLayout.buttonOverflow).toBe(false);
   for (let index = 0; index < 5; index += 1) await expect(navButtons.nth(index)).toBeVisible();
+});
 
+async function openDynamicPricingPanel(page: Page) {
+  const nav = await openAdmin(page);
   await nav.getByRole("button", { name: /Precio dinámico/ }).click();
+  const pricingPerformance = page.locator(".pricing-performance");
+  await expect(pricingPerformance).toContainText("$4.800");
+  return pricingPerformance;
+}
+
+test("@visual dynamic pricing performance panel matches desktop", async ({ page }) => {
+  await openDynamicPricingPanel(page);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await expect(page.locator(".admin-view")).toHaveScreenshot("admin-dynamic-pricing-desktop.png", {
     animations: "disabled",
   });
+});
+
+test("@visual dynamic pricing performance panel matches mobile", async ({ page }) => {
+  const pricingPerformance = await openDynamicPricingPanel(page);
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator(".admin-view")).toHaveScreenshot("admin-dynamic-pricing-mobile.png", {
     animations: "disabled",
   });
+  expect(
+    await pricingPerformance.evaluate((element) => element.scrollWidth <= element.clientWidth),
+  ).toBe(true);
+});
 
+async function openPricingSimulator(page: Page) {
   await page.route("**/api/staff/pricing/preview", (route) =>
     route.fulfill({
       status: 200,
@@ -174,9 +268,15 @@ test("@visual admin workspace keeps settings focused on desktop and mobile", asy
       },
     }),
   );
+  const nav = await openAdmin(page);
+  await nav.getByRole("button", { name: /Precio dinámico/ }).click();
   await page.locator('#dynamic-preview [name="startAt"]').fill("2026-10-31T20:00");
   await page.getByRole("button", { name: "Simular oferta" }).click();
   await expect(page.locator(".pricing-preview")).toBeVisible();
+}
+
+test("@visual dynamic pricing simulator result matches desktop", async ({ page }) => {
+  await openPricingSimulator(page);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await expect(page.locator(".admin-view")).toHaveScreenshot(
     "admin-dynamic-simulator-desktop.png",
@@ -184,6 +284,10 @@ test("@visual admin workspace keeps settings focused on desktop and mobile", asy
       animations: "disabled",
     },
   );
+});
+
+test("@visual dynamic pricing simulator result matches mobile", async ({ page }) => {
+  await openPricingSimulator(page);
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator(".admin-view")).toHaveScreenshot("admin-dynamic-simulator-mobile.png", {
     animations: "disabled",

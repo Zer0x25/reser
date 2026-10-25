@@ -1,6 +1,6 @@
 # Mejoras de experiencia para precios dinámicos
 
-Seguimiento de mejoras de flujo, interfaz y cobertura identificadas al revisar el panel y el proceso público. Todas las tareas de esta lista quedaron implementadas en las PR #1–#5; no cambian las reglas comerciales ni activan precios en producción.
+Seguimiento de mejoras de flujo, interfaz y cobertura identificadas al revisar el panel y el proceso público. Las mejoras iniciales quedaron implementadas en las PR #1–#5; el precio dinámico sigue desactivado por defecto.
 
 ## Prioridad alta
 
@@ -15,3 +15,8 @@ Seguimiento de mejoras de flujo, interfaz y cobertura identificadas al revisar e
 - [x] **Ajustar la pestaña de precio dinámico en móvil.** A 390 px, el nombre y el estado «Apagado» quedan cortados en la navegación horizontal; mostrar una etiqueta de estado legible sin perder acceso a las secciones.
 - [x] **Estabilizar los iconos de enlace externo.** En Chromium/Linux, `↗` se dibuja como emoji cuadrado azul en varios botones y pasos; usar un glifo o SVG que conserve el aspecto de flecha.
 - [x] **Añadir regresión visual del panel dinámico.** Crear capturas móvil y escritorio del panel de Precio dinámico y del resultado del simulador; las capturas actuales de administración cubren la sección de Tarifas y promociones.
+
+## Medición del piloto
+
+- [x] **Resumir resultados de reservas con precio dinámico.** Mostrar reservas registradas, descuentos aplicados, potencial no aplicado y resultados por canal. Los datos describen reservas creadas, no búsquedas ni ingresos incrementales.
+- [x] **Medir el recorrido desde cotización hasta reserva.** Contar alternativas web renderizadas, selecciones y solicitudes creadas con la cotización firmada; desglosar por tipo de precio. Guardar solo hash de token, tipo y fechas, sin datos personales, con retención automática de 90 días.

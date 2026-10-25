@@ -115,7 +115,8 @@ La optimización utiliza una puntuación de escenarios de demanda y una búsqued
 - El precio dinámico queda desactivado por defecto y requiere configuración explícita de piso, niveles, presupuesto, protecciones y canales antes de usarse. No cambia reservas confirmadas ni cotizaciones emitidas.
 - El umbral de aprobación por número de pistas es configurable; políticas de anticipos por canal/tipo aún no están implementadas.
 - Las modificaciones ordinarias de horario, duración, cantidad de pistas y jugadores aún no cuentan con flujo de aprobación. Tampoco existe flujo de incidencias y reubicación supervisada por falla de pista.
-- La ficha y el tablero no incluyen todos los indicadores históricos de ocupación, fragmentación, conversión e ingresos solicitados. Los indicadores presentes usan registros reales.
+- La administración resume reservas creadas con precio dinámico, descuentos registrados y potencial no aplicado por canal; también mide cotización mostrada, selección y solicitud por tipo de precio. El embudo no atribuye causalidad ni ingresos incrementales, y sus eventos sin datos personales se eliminan a los 90 días.
+- Aún faltan indicadores históricos de ocupación y fragmentación y un dashboard de ingresos.
 - La forma física del salón comienza con la distribución supuesta 2 × 6; la administración todavía no edita coordenadas o adyacencias.
 - La cola de correo reintenta cada 30 segundos mientras el proceso está activo. Para varios procesos API se debe añadir coordinación de trabajadores antes del despliegue horizontal.
 - Aún faltan flujos de modificación, detección de abuso en todos los canales, incidencias y reubicación de pistas, además de escenarios de pagos más completos. Tampoco hay smoke de URL desplegada, pruebas manuales con lector de pantalla ni cobertura global instrumentada.

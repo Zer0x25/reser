@@ -846,6 +846,31 @@ test("dynamic pricing requires explicit configuration and honors the locked quot
   assert.equal(option.priceOpportunity, true);
   assert.ok(option.quoteToken);
   assert.ok(option.quoteExpiresAt > Date.now());
+  const viewedQuotes = await fetch(`${base}/api/pricing/offers/viewed`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ quoteTokens: alternatives.map((candidate) => candidate.quoteToken) }),
+  });
+  assert.equal(viewedQuotes.status, 200);
+  assert.equal((await viewedQuotes.json()).recorded, alternatives.length);
+  const selectedQuote = await fetch(`${base}/api/pricing/selection`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ quoteToken: option.quoteToken }),
+  });
+  assert.equal(selectedQuote.status, 200);
+  const repeatedSelection = await fetch(`${base}/api/pricing/selection`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ quoteToken: option.quoteToken }),
+  });
+  assert.equal(repeatedSelection.status, 200);
+  const invalidSelection = await fetch(`${base}/api/pricing/selection`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ quoteToken: `${option.quoteToken}x` }),
+  });
+  assert.equal(invalidSelection.status, 400);
 
   const email = "dynamic-price@example.test";
   const marker = output.length;
@@ -930,6 +955,45 @@ test("dynamic pricing requires explicit configuration and honors the locked quot
   assert.equal(createdData.quote.dynamic.discountClp, 2400);
   assert.equal(createdData.quote.totalClp, 9600);
   assert.equal(createdData.quote.pricingSource, "dynamic");
+
+  const pricingPerformance = await fetch(`${base}/api/staff/pricing/performance?days=30`, {
+    headers: { cookie: adminCookie },
+  });
+  assert.equal(pricingPerformance.status, 200);
+  const performanceData = await pricingPerformance.json();
+  assert.equal(performanceData.windowDays, 30);
+  assert.equal(performanceData.totals.dynamicAppliedCount, 1);
+  assert.equal(performanceData.totals.dynamicDiscountCommittedClp, 2400);
+  assert.equal(performanceData.totals.dynamicQuoteTotalClp, 9600);
+  assert.equal(
+    performanceData.byChannel.find((channel) => channel.channel === "web")
+      .dynamicDiscountCommittedClp,
+    2400,
+  );
+  assert.equal(performanceData.funnel.totals.offeredCount, alternatives.length);
+  assert.equal(performanceData.funnel.totals.selectedCount, 1);
+  assert.equal(performanceData.funnel.totals.reservedCount, 1);
+  assert.equal(
+    performanceData.funnel.byPricingGroup.find((group) => group.pricingGroup === "dynamic_applied")
+      .reservedCount,
+    1,
+  );
+
+  const unsupportedPerformanceWindow = await fetch(`${base}/api/staff/pricing/performance?days=1`, {
+    headers: { cookie: adminCookie },
+  });
+  assert.equal(unsupportedPerformanceWindow.status, 400);
+  const receptionLogin = await fetch(`${base}/api/auth/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: "recepcion@demo.local", password: "BowlingDemo2026!" }),
+  });
+  assert.equal(receptionLogin.status, 200);
+  const receptionCookie = receptionLogin.headers.get("set-cookie").split(";")[0];
+  const forbiddenPerformance = await fetch(`${base}/api/staff/pricing/performance`, {
+    headers: { cookie: receptionCookie },
+  });
+  assert.equal(forbiddenPerformance.status, 403);
 
   const promotion = {
     name: "Promoción de prueba",

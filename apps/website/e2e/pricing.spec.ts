@@ -117,6 +117,11 @@ function makeExpiredQuoteToken(token: string) {
 test("customer sees and books an eligible dynamic price", async ({ page, request }) => {
   const { headers, originalDynamicPricing } = await configureDynamicPricing(request);
   try {
+    const baselineResponse = await request.get("/api/staff/pricing/performance?days=30", {
+      headers,
+    });
+    expect(baselineResponse.ok()).toBe(true);
+    const baselineFunnel = (await baselineResponse.json()).funnel.totals;
     const option = await searchForDynamicPrice(page);
     await expect(option.locator(".option-price-total")).toContainText("$12.000");
     await expect(option.locator(".option-price-total")).toContainText("$9.600");
@@ -137,6 +142,36 @@ test("customer sees and books an eligible dynamic price", async ({ page, request
     await page.goto(manageLink!);
     await expect(page.locator(".manage-grid")).toContainText("$9.600");
     await expect(page.locator(".manage-grid")).toContainText("Base $12.000 · descuento $2.400");
+
+    await page.goto("/admin");
+    await page.locator('#login [name="email"]').fill("admin@demo.local");
+    await page.locator('#login [name="password"]').fill("BowlingDemo2026!");
+    await page.getByRole("button", { name: "Ingresar →" }).click();
+    const adminNav = page.getByRole("navigation", { name: "Secciones de administración" });
+    await adminNav.getByRole("button", { name: /Precio dinámico/ }).click();
+    const performance = page.locator(".pricing-performance");
+    await expect(performance).toContainText("Resultados del piloto");
+    await expect(performance.locator(".pricing-performance-metrics article").nth(1)).toContainText(
+      "1",
+    );
+    await expect(performance.locator(".pricing-performance-metrics article").nth(3)).toContainText(
+      "$2.400",
+    );
+    const funnel = page.locator(".pricing-funnel");
+    await expect(funnel).toContainText("Cotización a solicitud");
+    const funnelMetrics = funnel.locator(".pricing-funnel-metrics article");
+    expect(Number(await funnelMetrics.nth(0).locator("b").textContent())).toBeGreaterThan(0);
+    expect(Number(await funnelMetrics.nth(1).locator("b").textContent())).toBeGreaterThanOrEqual(
+      baselineFunnel.selectedCount + 1,
+    );
+    expect(Number(await funnelMetrics.nth(2).locator("b").textContent())).toBeGreaterThanOrEqual(
+      baselineFunnel.reservedCount + 1,
+    );
+    await performance.locator('[name="pricingPerformanceDays"]').selectOption("7");
+    await expect(performance.locator('[name="pricingPerformanceDays"]')).toHaveValue("7");
+    await expect(performance.locator(".pricing-performance-metrics article").nth(3)).toContainText(
+      "$2.400",
+    );
   } finally {
     await restoreDynamicPricing(request, headers, originalDynamicPricing);
   }

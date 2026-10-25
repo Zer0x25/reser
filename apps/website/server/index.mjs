@@ -43,9 +43,12 @@ import {
   saveSettings,
   transaction,
 } from "./db.mjs";
+import { summarizePricingFunnel } from "./pricing-funnel.mjs";
+import { summarizePricingPerformance } from "./pricing-performance.mjs";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 const port = Number(process.env.PORT ?? 3001);
+const pricingFunnelRetentionMs = 90 * 24 * 60 * 60_000;
 const tokenSecret =
   process.env.TOKEN_SECRET ??
   (demoMode ? "local-development-token-secret-change-in-production" : null);
@@ -165,6 +168,46 @@ function publicQuote(quote) {
     };
   }
   return safe;
+}
+function pricingFunnelGroup(quote) {
+  if (quote.dynamic?.applied === true) return "dynamic_applied";
+  if (
+    Number.isSafeInteger(quote.dynamic?.potentialDiscountClp) &&
+    quote.dynamic.potentialDiscountClp > 0
+  )
+    return "dynamic_potential";
+  return "standard";
+}
+function prunePricingFunnel(conn, now) {
+  conn
+    .prepare("DELETE FROM pricing_quote_funnel WHERE offered_at < ?")
+    .run(now - pricingFunnelRetentionMs);
+}
+function recordPricingFunnelEvent(
+  conn,
+  quoteToken,
+  payload,
+  { selectedAt = null, reservedAt = null } = {},
+) {
+  const selected = selectedAt ?? reservedAt;
+  conn
+    .prepare(
+      `INSERT INTO pricing_quote_funnel(
+        quote_token_hash,channel,pricing_group,offered_at,expires_at,selected_at,reserved_at
+      ) VALUES(?,?,?,?,?,?,?)
+      ON CONFLICT(quote_token_hash) DO UPDATE SET
+        selected_at=COALESCE(pricing_quote_funnel.selected_at,excluded.selected_at),
+        reserved_at=COALESCE(pricing_quote_funnel.reserved_at,excluded.reserved_at)`,
+    )
+    .run(
+      digest(quoteToken),
+      payload.channel,
+      pricingFunnelGroup(payload.quote),
+      payload.offeredAt,
+      payload.expiresAt,
+      selected,
+      reservedAt,
+    );
 }
 function recordPricingDecision(
   conn,
@@ -452,6 +495,7 @@ function quoteLockForOption({ option, players, durationMinutes, settings, now })
   const expiresAt = now + quoteTtlMinutesFor(settings) * 60_000;
   const payload = {
     v: 1,
+    quoteId: randomUUID(),
     startMs: option.startMs,
     endMs: option.endMs,
     durationMinutes,
@@ -1147,6 +1191,43 @@ async function handleApi(req, res, url) {
       ),
     });
   }
+  if (method === "POST" && path === "/api/pricing/offers/viewed") {
+    const address = String(req.socket.remoteAddress ?? "unknown");
+    rateLimit(`pricing-offers-viewed:${address}`, 120, 15 * 60_000);
+    const body = await readBody(req);
+    if (
+      !isRecord(body) ||
+      !Array.isArray(body.quoteTokens) ||
+      body.quoteTokens.length < 1 ||
+      body.quoteTokens.length > 10 ||
+      body.quoteTokens.some((token) => typeof token !== "string")
+    )
+      throw new HttpError(400, "Las cotizaciones mostradas no son válidas.");
+    const offers = [...new Set(body.quoteTokens)].map((quoteToken) => ({
+      quoteToken,
+      payload: verifyQuoteToken(quoteToken),
+    }));
+    const now = Date.now();
+    transaction((conn) => {
+      prunePricingFunnel(conn, now);
+      for (const offer of offers) recordPricingFunnelEvent(conn, offer.quoteToken, offer.payload);
+    });
+    return json(res, 200, { recorded: offers.length });
+  }
+  if (method === "POST" && path === "/api/pricing/selection") {
+    const address = String(req.socket.remoteAddress ?? "unknown");
+    rateLimit(`pricing-selection:${address}`, 120, 15 * 60_000);
+    const body = await readBody(req);
+    if (!isRecord(body)) throw new HttpError(400, "La selección no es válida.");
+    const quoteToken = requireText(body.quoteToken, "Cotización", 250_000);
+    const payload = verifyQuoteToken(quoteToken);
+    const now = Date.now();
+    transaction((conn) => {
+      prunePricingFunnel(conn, now);
+      recordPricingFunnelEvent(conn, quoteToken, payload, { selectedAt: now });
+    });
+    return json(res, 200, { recorded: true });
+  }
   if (method === "GET" && path === "/api/availability") {
     const date = url.searchParams.get("date") ?? "";
     const time = url.searchParams.get("time") ?? "16:00";
@@ -1416,6 +1497,13 @@ async function handleApi(req, res, url) {
           currentSettings.dynamicPricing?.configVersion ??
           0,
       });
+      if (lockedQuote && body.quoteToken) {
+        prunePricingFunnel(conn, now);
+        recordPricingFunnelEvent(conn, body.quoteToken, lockedQuote, {
+          selectedAt: now,
+          reservedAt: now,
+        });
+      }
       conn
         .prepare("UPDATE email_proofs SET consumed_at=? WHERE token_hash=?")
         .run(now, digest(proofToken));
@@ -2622,6 +2710,34 @@ async function handleApi(req, res, url) {
     });
     return json(res, 200, { ok: true });
   }
+  if (method === "GET" && path === "/api/staff/pricing/performance") {
+    requireActor(req, ["admin"]);
+    const windowDays = Number(url.searchParams.get("days") ?? 30);
+    if (![7, 30, 90].includes(windowDays))
+      throw new HttpError(400, "El período debe ser de 7, 30 o 90 días.");
+    const to = Date.now();
+    const from = to - windowDays * 24 * 60 * 60_000;
+    const rows = db
+      .prepare(
+        `SELECT channel,commercial_status AS commercialStatus,quote_clp AS quoteClp,quote_json AS quoteJson
+         FROM reservations WHERE created_at>=? AND created_at<? ORDER BY created_at DESC`,
+      )
+      .all(from, to);
+    prunePricingFunnel(db, to);
+    const funnelRows = db
+      .prepare(
+        `SELECT pricing_group AS pricingGroup,selected_at AS selectedAt,reserved_at AS reservedAt
+         FROM pricing_quote_funnel WHERE offered_at>=? AND offered_at<? ORDER BY offered_at DESC`,
+      )
+      .all(from, to);
+    return json(res, 200, {
+      windowDays,
+      from,
+      to,
+      funnel: summarizePricingFunnel(funnelRows),
+      ...summarizePricingPerformance(rows),
+    });
+  }
   if (method === "POST" && path === "/api/staff/pricing/preview") {
     requireActor(req, ["admin"]);
     const body = await readBody(req);
@@ -3072,7 +3188,15 @@ server.listen(port, "0.0.0.0", () =>
 );
 void drainMailOutbox();
 const mailRetryTimer = setInterval(() => void drainMailOutbox(), 30_000);
+const _pricingFunnelRetentionTimer = setInterval(() => {
+  try {
+    prunePricingFunnel(db, Date.now());
+  } catch (error) {
+    process.stderr.write(`[pricing funnel retention] ${error.stack ?? error}\n`);
+  }
+}, 60 * 60_000);
 mailRetryTimer.unref();
+_pricingFunnelRetentionTimer.unref();
 for (const signal of ["SIGINT", "SIGTERM"])
   process.on(signal, () =>
     server.close(() => {
