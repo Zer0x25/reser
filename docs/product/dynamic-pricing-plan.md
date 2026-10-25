@@ -517,20 +517,22 @@ Se puede empezar con `audit_log` y añadir la tabla en la fase de piloto. Lo imp
 
 ### 6.7 Archivos previstos
 
-| Archivo                                                    | Cambio                                                                                              |
-| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `apps/website/server/domain.mjs`                           | Cotización por catálogo, riesgo, oferta dinámica, mejor beneficio único, ranking con hueco          |
-| `apps/website/server/db.mjs`                               | Defaults seguros de `dynamicPricing` y migración de settings existentes sin activar la función      |
-| `apps/website/server/index.mjs`                            | Tokens de cotización, validaciones, endpoints, persistencia del desglose                            |
-| `apps/website/server/migrations/002_pricing_decisions.sql` | Tabla de decisiones de precio (fase de piloto)                                                      |
-| `apps/website/server/domain.test.mjs`                      | Pruebas unitarias y de propiedades                                                                  |
-| `apps/website/server/api.test.mjs`                         | Configuración, versionado, cotización bloqueada, expiración, concurrencia, auditoría                |
-| `apps/website/server/engine-simulation.mjs`                | Comparación de políticas con y sin descuento dinámico                                               |
-| `apps/website/src/views/admin.ts`                          | Panel completo de variables, simulación e historial de versiones                                    |
-| `apps/website/src/main.ts`                                 | Guardado de la configuración, visualización del desglose, etiquetas y manejo de cotización expirada |
-| `apps/website/e2e/`                                        | Flujo público, administración y casos de expiración                                                 |
-| `docs/decisions/0009-...md`                                | ADR que autoriza el precio dinámico acotado y reemplaza la exclusión del alcance original           |
-| `README.md`                                                | Documentar la función como opcional, configurable y desactivada por defecto cuando se implemente    |
+| Archivo                                                       | Cambio                                                                                              |
+| ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `apps/website/server/migrations/003_pricing_quote_funnel.sql` | Eventos del embudo de cotización con retención de 90 días y sin PII                                 |
+| `apps/website/server/pricing-funnel.mjs`                      | Agregación del embudo por tipo de precio                                                            |
+| `apps/website/server/domain.mjs`                              | Cotización por catálogo, riesgo, oferta dinámica, mejor beneficio único, ranking con hueco          |
+| `apps/website/server/db.mjs`                                  | Defaults seguros de `dynamicPricing` y migración de settings existentes sin activar la función      |
+| `apps/website/server/index.mjs`                               | Tokens de cotización, validaciones, endpoints, persistencia del desglose                            |
+| `apps/website/server/migrations/002_pricing_decisions.sql`    | Tabla de decisiones de precio (fase de piloto)                                                      |
+| `apps/website/server/domain.test.mjs`                         | Pruebas unitarias y de propiedades                                                                  |
+| `apps/website/server/api.test.mjs`                            | Configuración, versionado, cotización bloqueada, expiración, concurrencia, auditoría                |
+| `apps/website/server/engine-simulation.mjs`                   | Comparación de políticas con y sin descuento dinámico                                               |
+| `apps/website/src/views/admin.ts`                             | Panel completo de variables, simulación e historial de versiones                                    |
+| `apps/website/src/main.ts`                                    | Guardado de la configuración, visualización del desglose, etiquetas y manejo de cotización expirada |
+| `apps/website/e2e/`                                           | Flujo público, administración y casos de expiración                                                 |
+| `docs/decisions/0009-...md`                                   | ADR que autoriza el precio dinámico acotado y reemplaza la exclusión del alcance original           |
+| `README.md`                                                   | Documentar la función como opcional, configurable y desactivada por defecto cuando se implemente    |
 
 ## 7. Rankings y alternativas
 
@@ -564,6 +566,8 @@ Definir antes de implementar, para no medir solo “reservas”:
 | Cancelaciones                     | canceladas / confirmadas                                         | Detectar abuso o arrepentimiento                 |
 | Canibalización                    | reservas con descuento que habrían ocurrido a precio completo    | Requiere grupo de control                        |
 | Incrementalidad                   | reservas en horarios que antes quedaban vacíos                   | Medir el beneficio real                          |
+
+El embudo implementado cuenta alternativas web renderizadas, selecciones y solicitudes creadas con la cotización firmada; incluye las que quedan pendientes de aprobación. No equivale a reserva confirmada ni a ingreso incremental. Los eventos guardan un hash del token, tipo de precio y fechas, sin datos personales, y se eliminan a los 90 días.
 
 La canibalización no se puede observar directamente. Se aproxima con un piloto controlado: ciertos días/franjas reciben descuento y otros comparables no, o se alternan semanas. Con una sola sede y pocos datos, la conclusión será direccional, no estadísticamente definitiva.
 

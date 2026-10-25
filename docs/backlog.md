@@ -19,4 +19,4 @@ Seguimiento de mejoras de flujo, interfaz y cobertura identificadas al revisar e
 ## Medición del piloto
 
 - [x] **Resumir resultados de reservas con precio dinámico.** Mostrar reservas registradas, descuentos aplicados, potencial no aplicado y resultados por canal. Los datos describen reservas creadas, no búsquedas ni ingresos incrementales.
-- [ ] **Medir el recorrido desde cotización hasta reserva.** Registrar de forma agregada las cotizaciones mostradas y su selección para calcular conversión; definir el alcance y la retención de esos eventos antes de recogerlos.
+- [x] **Medir el recorrido desde cotización hasta reserva.** Contar alternativas web renderizadas, selecciones y solicitudes creadas con la cotización firmada; desglosar por tipo de precio. Guardar solo hash de token, tipo y fechas, sin datos personales, con retención automática de 90 días.

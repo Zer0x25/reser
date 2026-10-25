@@ -127,6 +127,29 @@ async function openAdmin(page: Page) {
             dynamicPotentialNotAppliedClp: 0,
           },
         ],
+        funnel: {
+          totals: { offeredCount: 44, selectedCount: 12, reservedCount: 8 },
+          byPricingGroup: [
+            {
+              pricingGroup: "dynamic_applied",
+              offeredCount: 10,
+              selectedCount: 4,
+              reservedCount: 3,
+            },
+            {
+              pricingGroup: "dynamic_potential",
+              offeredCount: 8,
+              selectedCount: 1,
+              reservedCount: 0,
+            },
+            {
+              pricingGroup: "standard",
+              offeredCount: 26,
+              selectedCount: 7,
+              reservedCount: 5,
+            },
+          ],
+        },
       },
     }),
   );

@@ -27,6 +27,69 @@ const dynamicChannelLabels: Record<string, string> = {
   walk_in: "Presencial inmediata",
   counter_future: "Presencial futura",
 };
+const pricingFunnelGroupLabels: Record<string, string> = {
+  dynamic_applied: "Dinámico aplicado",
+  dynamic_potential: "Dinámico potencial",
+  standard: "Sin descuento dinámico",
+};
+
+function funnelPercent(part: number, total: number) {
+  return total > 0
+    ? ((part / total) * 100).toLocaleString("es-CL", { maximumFractionDigits: 1 }) + "%"
+    : "—";
+}
+
+function renderPricingFunnel(
+  funnel: any,
+  esc: (value: string | number | boolean | null | undefined) => string,
+) {
+  const totals = funnel?.totals;
+  if (!totals) return "";
+  const offeredCount = Number(totals.offeredCount ?? 0);
+  const selectedCount = Number(totals.selectedCount ?? 0);
+  const reservedCount = Number(totals.reservedCount ?? 0);
+  const groups = Array.isArray(funnel?.byPricingGroup) ? funnel.byPricingGroup : [];
+  const groupRows = groups
+    .map(
+      (item: any) =>
+        '<tr><th scope="row">' +
+        esc(pricingFunnelGroupLabels[item.pricingGroup] ?? item.pricingGroup) +
+        "</th><td>" +
+        item.offeredCount +
+        "</td><td>" +
+        item.selectedCount +
+        "</td><td>" +
+        item.reservedCount +
+        "</td><td>" +
+        funnelPercent(item.selectedCount, item.offeredCount) +
+        "</td><td>" +
+        funnelPercent(item.reservedCount, item.offeredCount) +
+        "</td></tr>",
+    )
+    .join("");
+  return (
+    '<section class="pricing-funnel" aria-labelledby="pricing-funnel-title"><div class="panel-title"><div><h3 id="pricing-funnel-title">Cotización a solicitud</h3><p>Seguimiento de alternativas mostradas en la búsqueda web.</p></div></div>' +
+    '<div class="pricing-funnel-metrics" aria-live="polite"><article><small>Cotizaciones mostradas</small><b>' +
+    offeredCount +
+    "</b><span>Alternativas renderizadas en resultados</span></article><article><small>Seleccionadas</small><b>" +
+    selectedCount +
+    "</b><span>" +
+    funnelPercent(selectedCount, offeredCount) +
+    " de las cotizaciones</span></article><article><small>Solicitudes creadas</small><b>" +
+    reservedCount +
+    "</b><span>" +
+    funnelPercent(reservedCount, offeredCount) +
+    " de las cotizaciones · " +
+    funnelPercent(reservedCount, selectedCount) +
+    " de las seleccionadas</span></article></div>" +
+    (groups.length
+      ? '<div class="pricing-performance-table-wrap"><table class="pricing-performance-table"><caption>Conversión por tipo de precio</caption><thead><tr><th scope="col">Tipo</th><th scope="col">Mostradas</th><th scope="col">Seleccionadas</th><th scope="col">Solicitudes</th><th scope="col">Selección</th><th scope="col">Solicitud / oferta</th></tr></thead><tbody>' +
+        groupRows +
+        "</tbody></table></div>"
+      : '<p class="muted">Aún no hay cotizaciones mostradas en este período.</p>') +
+    '<p class="pricing-performance-note">Cada alternativa renderizada cuenta una vez. La solicitud se atribuye a su cotización firmada e incluye solicitudes pendientes. Las cotizaciones recientes aún pueden convertir durante su vigencia, por lo que las tasas pueden variar. Se conserva un hash del token, el tipo de precio y sus fechas; no se guarda nombre ni correo y los eventos se eliminan a los 90 días. La comparación no atribuye causalidad ni ingresos incrementales.</p></section>'
+  );
+}
 
 function renderPricingPerformance(
   performance: any,
@@ -41,7 +104,7 @@ function renderPricingPerformance(
     totals
       ? `<div class="pricing-performance-metrics" aria-live="polite"><article><small>Reservas registradas</small><b>${totals.reservationCount}</b><span>${totals.pendingCount} pendientes · ${totals.cancelledCount} canceladas o rechazadas</span></article><article><small>Con descuento dinámico</small><b>${totals.dynamicAppliedCount}</b><span>Reservas no canceladas</span></article><article><small>Importe cotizado con dinámico</small><b>${money(totals.dynamicQuoteTotalClp)}</b><span>Precio final de esas reservas</span></article><article><small>Descuento dinámico registrado</small><b>${money(totals.dynamicDiscountCommittedClp)}</b><span>Incluye pendientes; excluye cancelaciones y rechazos</span></article><article><small>Potencial dinámico no aplicado</small><b>${money(totals.dynamicPotentialNotAppliedClp)}</b><span>Por sombra o por una promoción mayor</span></article></div>${channels.length ? `<div class="pricing-performance-table-wrap"><table class="pricing-performance-table"><caption>Resultados por canal</caption><thead><tr><th scope="col">Canal</th><th scope="col">Reservas</th><th scope="col">Con dinámico</th><th scope="col">Descuento</th></tr></thead><tbody>${channels.map((item: any) => `<tr><th scope="row">${esc(dynamicChannelLabels[item.channel] ?? item.channel)}</th><td>${item.reservationCount}</td><td>${item.dynamicAppliedCount}</td><td>${money(item.dynamicDiscountCommittedClp)}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted">No hay reservas creadas en este período.</p>`}<p class="pricing-performance-note">Incluye cotizaciones que ya generaron una solicitud o reserva. No cuenta búsquedas sin reserva ni estima ingresos incrementales. Las reservas pendientes se incluyen; los importes excluyen canceladas y rechazadas.</p>`
       : `<p class="muted" role="status">Cargando resultados…</p>`
-  }</div>`;
+  }${renderPricingFunnel(performance?.funnel, esc)}</div>`;
 }
 
 export function renderAdminView(

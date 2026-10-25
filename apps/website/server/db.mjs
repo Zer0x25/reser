@@ -38,6 +38,19 @@ if (schemaVersion < 2) {
   );
   db.exec("PRAGMA user_version = 2");
 }
+if (schemaVersion < 3) {
+  db.exec(
+    readFileSync(new URL("./migrations/003_pricing_quote_funnel.sql", import.meta.url), "utf8"),
+  );
+  db.prepare("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(3,?,?)").run(
+    "pricing quote funnel",
+    now,
+  );
+  db.exec("PRAGMA user_version = 3");
+}
+db.prepare("DELETE FROM pricing_quote_funnel WHERE offered_at < ?").run(
+  now - 90 * 24 * 60 * 60_000,
+);
 db.prepare("UPDATE email_outbox SET status='queued' WHERE status='sending'").run();
 
 const DEMO_HOURS = {

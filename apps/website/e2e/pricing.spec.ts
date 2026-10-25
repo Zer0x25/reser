@@ -152,6 +152,12 @@ test("customer sees and books an eligible dynamic price", async ({ page, request
     await expect(performance.locator(".pricing-performance-metrics article").nth(3)).toContainText(
       "$2.400",
     );
+    const funnel = page.locator(".pricing-funnel");
+    await expect(funnel).toContainText("Cotización a solicitud");
+    const funnelMetrics = funnel.locator(".pricing-funnel-metrics article");
+    expect(Number(await funnelMetrics.nth(0).locator("b").textContent())).toBeGreaterThan(0);
+    await expect(funnelMetrics.nth(1).locator("b")).toHaveText("1");
+    await expect(funnelMetrics.nth(2).locator("b")).toHaveText("1");
     await performance.locator('[name="pricingPerformanceDays"]').selectOption("7");
     await expect(performance.locator('[name="pricingPerformanceDays"]')).toHaveValue("7");
     await expect(performance.locator(".pricing-performance-metrics article").nth(3)).toContainText(

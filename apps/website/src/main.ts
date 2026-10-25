@@ -794,6 +794,13 @@ app.addEventListener("submit", async (event) => {
       if (state.options.length)
         say(`${state.options.length} alternativas disponibles. Elige la que prefieres.`, "success");
       render();
+      if (state.options.length)
+        void api("/api/pricing/offers/viewed", {
+          method: "POST",
+          body: JSON.stringify({
+            quoteTokens: state.options.map((option: Option) => option.quoteToken),
+          }),
+        }).catch(() => {});
       const results = document.querySelector<HTMLElement>(".options, .availability-empty");
       results?.scrollIntoView({ behavior: "smooth" });
       if (state.options.length)
@@ -1568,9 +1575,15 @@ app.addEventListener("click", async (event) => {
       render();
     }
     if (action === "select") {
-      state.selected = state.options.find(
+      const selectedOption = state.options.find(
         (x: Option) => x.startMs === Number(target.dataset.start),
       );
+      state.selected = selectedOption ?? null;
+      if (selectedOption)
+        void api("/api/pricing/selection", {
+          method: "POST",
+          body: JSON.stringify({ quoteToken: selectedOption.quoteToken }),
+        }).catch(() => {});
       state.proof = "";
       state.verifiedEmail = "";
       state.requestName = "";

@@ -4628,6 +4628,59 @@ footer {
 .pricing-performance-note {
   margin: 12px 0 0;
 }
+.pricing-funnel {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid #e6e0d7;
+}
+.pricing-funnel .panel-title {
+  margin-bottom: 12px;
+}
+.pricing-funnel h3 {
+  margin: 0 0 4px;
+  color: #252525;
+  font:
+    700 16px/1.3 Poppins,
+    sans-serif;
+}
+.pricing-funnel .panel-title p {
+  margin: 0;
+  color: #68645f;
+  font-size: 11px;
+}
+.pricing-funnel-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.pricing-funnel-metrics article {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 7px;
+  padding: 13px;
+  border: 1px solid #e6e0d7;
+  border-radius: 11px;
+  background: #fbfaf7;
+}
+.pricing-funnel-metrics small {
+  color: #57534f;
+  font-size: 10px;
+  line-height: 1.4;
+}
+.pricing-funnel-metrics b {
+  color: var(--ox-burgundy);
+  font:
+    700 20px/1.15 Poppins,
+    sans-serif;
+  overflow-wrap: anywhere;
+}
+.pricing-funnel-metrics span {
+  color: #68645f;
+  font-size: 10px;
+  line-height: 1.5;
+}
 .pricing-preview > b {
   font: 700 18px var(--serif);
   color: #183c35;
@@ -4678,6 +4731,12 @@ footer {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .pricing-performance-metrics article:last-child {
+    grid-column: 1 / -1;
+  }
+  .pricing-funnel-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .pricing-funnel-metrics article:last-child {
     grid-column: 1 / -1;
   }
 }
