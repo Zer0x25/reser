@@ -220,6 +220,24 @@ p {
   font-size: 21px;
   color: inherit;
 }
+.notice.has-refresh {
+  display: grid;
+  gap: 9px;
+}
+.notice button.notice-refresh {
+  position: static;
+  width: max-content;
+  max-width: 100%;
+  padding: 7px 11px;
+  border: 1px solid currentColor;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.55);
+  font-size: 12px;
+  font-weight: 700;
+}
+.notice button.notice-dismiss {
+  position: absolute;
+}
 main {
   padding: 0 clamp(18px, 5vw, 76px);
 }
