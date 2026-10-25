@@ -18,6 +18,25 @@ import {
   localDateTimeToEpoch as localEpoch,
 } from "../shared/time.mjs";
 
+type DynamicQuote = {
+  applied: boolean;
+  shadow?: boolean;
+  reason?: string | null;
+  reasonCode?: string | null;
+  discountClp: number;
+  potentialDiscountClp: number;
+  totalAfterDiscountClp?: number;
+  discountPercent?: number;
+  riskPoints?: number | null;
+  configVersion?: number | null;
+  signals?: {
+    occupancyPercent?: number | null;
+    leadTimeHours?: number | null;
+    gapRisk?: boolean;
+    futureValueRisk?: boolean;
+    [key: string]: unknown;
+  };
+};
 type Option = {
   startAt: string;
   startMs: number;
@@ -28,7 +47,17 @@ type Option = {
   laneCount: number;
   minimumLanes: number;
   grouped: boolean;
-  quote: { totalClp: number; baseClp: number; discountClp: number; promotionName?: string };
+  quote: {
+    totalClp: number;
+    baseClp: number;
+    discountClp: number;
+    promotionName?: string | null;
+    pricingSource?: string;
+    dynamic?: DynamicQuote | null;
+  };
+  quoteToken: string;
+  quoteExpiresAt: number;
+  priceOpportunity?: boolean;
   distanceMinutes: number;
   rank: number;
   recommended: boolean;
@@ -103,6 +132,7 @@ const state: any = {
   adminSection: "general",
   audit: [],
   outbox: [],
+  pricingPreview: null,
   message: "",
   kind: "",
   modal: null,
@@ -328,10 +358,16 @@ function renderOptions() {
           ? "Una pista para tu grupo"
           : `${laneLabel} ${o.grouped ? "contiguas" : "separadas"} para tu grupo`;
       const priceConfigured = state.config?.rateConfigured || state.config?.demoMode;
+      const hasDiscount = o.quote.discountClp > 0 && o.quote.totalClp < o.quote.baseClp;
+      const benefit = o.quote.promotionName
+        ? `<small class="promo">${esc(o.quote.promotionName)} aplicado</small>`
+        : o.quote.dynamic?.applied
+          ? `<small class="promo dynamic">Precio especial · ${esc(o.quote.dynamic.reason ?? "Baja demanda")}</small>`
+          : "";
       const priceDetails = priceConfigured
-        ? `<div><small>${o.laneCount === 1 ? "Por pista" : "Promedio por pista"}</small><b>${money(Math.round(o.quote.totalClp / o.laneCount))}</b></div><div class="option-price-total"><small>Total · ${laneLabel} · ${durationLabel(o.durationMinutes)}</small><b>${money(o.quote.totalClp)}</b></div>`
+        ? `<div><small>${o.laneCount === 1 ? "Por pista" : "Promedio por pista"}</small><b>${money(Math.round(o.quote.totalClp / o.laneCount))}</b></div><div class="option-price-total"><small>Total · ${laneLabel} · ${durationLabel(o.durationMinutes)}</small>${hasDiscount ? `<small class="price-base">Antes ${money(o.quote.baseClp)}</small>` : ""}<b>${money(o.quote.totalClp)}</b></div>`
         : `<div class="option-price-total"><small>Total · ${laneLabel} · ${durationLabel(o.durationMinutes)}</small><b>Tarifa por configurar</b></div>`;
-      return `<article class="option-card ${chosen ? "chosen" : ""}"><div class="option-time"><b>${esc(o.startTime)}</b><small>${esc(o.endTime)} término</small>${repeatedTimes.has(o.startTime) && o.utcOffset ? `<small>${esc(o.utcOffset)}</small>` : ""}</div><div class="option-info"><div><span class="tag ${o.recommended ? "green" : ""}">${o.recommended ? "Recomendado" : tag}</span><span class="tag">${durationLabel(o.durationMinutes)}</span></div><p>${pisteDescription}</p>${o.quote.promotionName ? `<small class="promo">${esc(o.quote.promotionName)} aplicado</small>` : ""}</div><div class="option-price">${priceDetails}</div><button class="button ${chosen ? "chosen-button" : "outline"}" data-action="select" data-start="${o.startMs}">${chosen ? "Elegido ✓" : "Elegir"}</button></article>`;
+      return `<article class="option-card ${chosen ? "chosen" : ""}"><div class="option-time"><b>${esc(o.startTime)}</b><small>${esc(o.endTime)} término</small>${repeatedTimes.has(o.startTime) && o.utcOffset ? `<small>${esc(o.utcOffset)}</small>` : ""}</div><div class="option-info"><div><span class="tag ${o.recommended ? "green" : ""}">${o.recommended ? "Recomendado" : tag}</span><span class="tag">${durationLabel(o.durationMinutes)}</span>${o.quote.dynamic?.applied ? `<span class="tag green">Precio especial</span>` : ""}</div><p>${pisteDescription}</p>${benefit}</div><div class="option-price">${priceDetails}</div><button class="button ${chosen ? "chosen-button" : "outline"}" data-action="select" data-start="${o.startMs}">${chosen ? "Elegido ✓" : "Elegir"}</button></article>`;
     })
     .join("")}</section>`;
 }
@@ -345,7 +381,16 @@ function renderRequestForm() {
     state.options.filter((option: Option) => option.startAt === o.startAt).length > 1
       ? ` · ${o.utcOffset}`
       : "";
-  return `<section class="request-card"><button class="close" data-action="clear-selection" aria-label="Cerrar">×</button><div class="panel-title"><div><span class="eyebrow">TU OPCIÓN ELEGIDA</span><h3>${esc(o.startTime)}${esc(offset)} — ${esc(o.endTime)}</h3><p>${o.laneCount} ${o.laneCount === 1 ? "pista" : "pistas"} · ${state.duration / 60} h · ${state.players} jugadores</p></div><div class="total"><small>Total</small><b>${priceConfigured ? money(o.quote.totalClp) : "Por configurar"}</b><small>${state.config?.demoMode ? "precio ilustrativo" : "CLP"}</small></div></div><form id="request"><div class="two-fields"><label>Nombre del responsable<input name="name" autocomplete="name" required maxlength="120" value="${esc(state.requestName)}" placeholder="Tu nombre"></label><label>Correo electrónico<input name="email" type="email" autocomplete="email" required value="${esc(state.requestEmail || state.verifiedEmail)}" placeholder="nombre@correo.cl"></label></div><div class="verify-row"><span>✉ <b>Verifica tu correo</b><small>Enviamos un código de seis dígitos. Todavía no retenemos pistas.</small></span><button type="button" class="button outline" data-action="send-code">Enviar código</button></div><div class="code-row"><label>Código de verificación<input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" value="${esc(state.verificationCode)}" placeholder="000000" ${state.proof ? "disabled" : ""}></label><button type="button" class="button outline" data-action="verify" ${state.proof ? "disabled" : ""}>${state.proof ? "Correo verificado ✓" : "Verificar correo"}</button></div>${state.proof ? `<p class="verified">✓ Correo verificado para ${esc(state.verifiedEmail)}. Comprobaremos disponibilidad al enviar.</p>` : ""}${!priceConfigured ? `<p class="verified">Recepción debe configurar una tarifa antes de aceptar reservas.</p>` : ""}<label class="accept"><input name="terms" type="checkbox" ${state.requestTermsAccepted ? "checked" : ""} required><span>Acepto la tarifa, el horario y las condiciones. Un grupo grande puede requerir aprobación de recepción.</span></label><button class="button primary submit" ${state.proof && priceConfigured ? "" : "disabled"}>${o.laneCount >= 3 ? "Solicitar aprobación" : "Reservar este horario"} →</button><small class="privacy">🔒 Sin cuenta. El enlace de seguimiento solo da acceso a esta reserva.</small></form></section>`;
+  const hasDiscount = o.quote.discountClp > 0 && o.quote.totalClp < o.quote.baseClp;
+  const benefit = o.quote.promotionName
+    ? `<small class="promo">${esc(o.quote.promotionName)} aplicado</small>`
+    : o.quote.dynamic?.applied
+      ? `<small class="promo dynamic">${esc(o.quote.dynamic.reason ?? "Precio especial por baja demanda")}</small>`
+      : "";
+  const total = priceConfigured
+    ? `${hasDiscount ? `<small class="price-base">Antes ${money(o.quote.baseClp)}</small>` : ""}<b>${money(o.quote.totalClp)}</b>`
+    : `<b>Por configurar</b>`;
+  return `<section class="request-card"><button class="close" data-action="clear-selection" aria-label="Cerrar">×</button><div class="panel-title"><div><span class="eyebrow">TU OPCIÓN ELEGIDA</span><h3>${esc(o.startTime)}${esc(offset)} — ${esc(o.endTime)}</h3><p>${o.laneCount} ${o.laneCount === 1 ? "pista" : "pistas"} · ${state.duration / 60} h · ${state.players} jugadores</p></div><div class="total"><small>Total</small>${total}${benefit}<small>${state.config?.demoMode ? "precio ilustrativo" : "CLP"}</small></div></div><form id="request"><div class="two-fields"><label>Nombre del responsable<input name="name" autocomplete="name" required maxlength="120" value="${esc(state.requestName)}" placeholder="Tu nombre"></label><label>Correo electrónico<input name="email" type="email" autocomplete="email" required value="${esc(state.requestEmail || state.verifiedEmail)}" placeholder="nombre@correo.cl"></label></div><div class="verify-row"><span>✉ <b>Verifica tu correo</b><small>Enviamos un código de seis dígitos. Todavía no retenemos pistas.</small></span><button type="button" class="button outline" data-action="send-code">Enviar código</button></div><div class="code-row"><label>Código de verificación<input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" value="${esc(state.verificationCode)}" placeholder="000000" ${state.proof ? "disabled" : ""}></label><button type="button" class="button outline" data-action="verify" ${state.proof ? "disabled" : ""}>${state.proof ? "Correo verificado ✓" : "Verificar correo"}</button></div>${state.proof ? `<p class="verified">✓ Correo verificado para ${esc(state.verifiedEmail)}. Comprobaremos disponibilidad al enviar.</p>` : ""}${!priceConfigured ? `<p class="verified">Recepción debe configurar una tarifa antes de aceptar reservas.</p>` : ""}<p class="quote-lock">Precio válido hasta las ${esc(time(o.quoteExpiresAt))}. Las pistas se confirman al enviar la solicitud; si el horario se ocupa, te mostraremos alternativas.</p><label class="accept"><input name="terms" type="checkbox" ${state.requestTermsAccepted ? "checked" : ""} required><span>Acepto la tarifa, el horario y las condiciones. Un grupo grande puede requerir aprobación de recepción.</span></label><button class="button primary submit" ${state.proof && priceConfigured ? "" : "disabled"}>${o.laneCount >= 3 ? "Solicitar aprobación" : "Reservar este horario"} →</button><small class="privacy">🔒 Sin cuenta. El enlace de seguimiento solo da acceso a esta reserva.</small></form></section>`;
 }
 function renderResult() {
   const r = state.result;
@@ -355,7 +400,7 @@ function renderManage() {
   const b = state.managed;
   const renewal = `<article class="manage-card"><span class="eyebrow">SEGUIMIENTO PRIVADO</span><h1>Renueva tu enlace</h1><p>El enlace pudo vencer. La reserva y sus pistas siguen igual. Verifica el correo asociado y escribe el código de reserva para recibir un enlace nuevo.</p><form id="manage-renew"><label>Correo de la reserva<input name="email" type="email" autocomplete="email" value="${esc(state.manageEmail)}" required></label><label>Código de reserva<input name="bookingCode" autocomplete="off" maxlength="20" value="${esc(state.manageBookingCode)}" placeholder="B-12AB34CD" required></label><div class="verify-row"><span>✉ <b>Verifica tu correo</b><small>Enviaremos un código de seis dígitos.</small></span><button type="button" class="button outline" data-action="manage-send-code">Enviar código</button></div><div class="code-row"><label>Código de verificación<input name="verificationCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000" ${state.manageProof ? "disabled" : ""}></label><button type="button" class="button outline" data-action="manage-verify" ${state.manageProof ? "disabled" : ""}>${state.manageProof ? "Correo verificado ✓" : "Verificar correo"}</button></div>${state.manageProof ? `<p class="verified">Correo verificado. Al continuar enviaremos un enlace válido por 24 horas.</p>` : ""}<button class="button primary" ${state.manageProof ? "" : "disabled"}>Enviar enlace nuevo →</button></form></article>`;
   shell(
-    `<section class="manage-page"><button class="back" data-action="leave-manage">← Volver a reservas</button>${b ? `<article class="manage-card"><div class="panel-title"><div><span class="eyebrow">SEGUIMIENTO PRIVADO</span><h1>Tu reserva</h1><p>Código ${esc(b.code)}</p></div><span class="pill ${b.status === "confirmed" ? "green" : "amber"}">${esc(b.statusLabel)}</span></div><div class="manage-grid"><span>Fecha<b>${esc(dateText(b.localDate))}</b></span><span>Horario<b>${esc(b.startTime)}${b.ambiguousLocalTime ? ` · ${esc(b.utcOffset)}` : ""} — ${esc(b.endTime)}</b></span><span>Grupo<b>${b.players} personas · ${b.laneCount} pistas</b></span><span>Condición<b>${b.grouped ? "Pistas juntas" : "Pistas separadas, aceptado"}</b></span><span>Total<b>${money(b.quoteClp)}</b></span><span>Pagos acreditados<b>${money(b.paymentsVerifiedClp)} · saldo ${money(b.balanceClp)}</b></span></div>${b.requestStatus === "pending_price_acceptance" ? `<div class="price-accept"><b>Recepción actualizó el precio a ${money(state.managed.updatedQuoteClp)}.</b><button class="button primary" data-action="accept-price">Aceptar precio actualizado</button></div>` : ""}${b.status === "confirmed" && b.start - Date.now() >= 86400000 ? `<button class="button outline" data-action="customer-cancel">Cancelar reserva</button>` : ""}<p class="privacy">Este enlace vence en 24 horas. Su expiración no afecta la reserva.</p></article>` : state.manageLoadFailed ? renewal : `<div class="loading-card">Abriendo tu enlace seguro…</div>`}</section>`,
+    `<section class="manage-page"><button class="back" data-action="leave-manage">← Volver a reservas</button>${b ? `<article class="manage-card"><div class="panel-title"><div><span class="eyebrow">SEGUIMIENTO PRIVADO</span><h1>Tu reserva</h1><p>Código ${esc(b.code)}</p></div><span class="pill ${b.status === "confirmed" ? "green" : "amber"}">${esc(b.statusLabel)}</span></div><div class="manage-grid"><span>Fecha<b>${esc(dateText(b.localDate))}</b></span><span>Horario<b>${esc(b.startTime)}${b.ambiguousLocalTime ? ` · ${esc(b.utcOffset)}` : ""} — ${esc(b.endTime)}</b></span><span>Grupo<b>${b.players} personas · ${b.laneCount} pistas</b></span><span>Condición<b>${b.grouped ? "Pistas juntas" : "Pistas separadas, aceptado"}</b></span><span>Total<b>${money(b.quoteClp)}</b>${b.quote?.discountClp ? `<small>Base ${money(b.quote.baseClp)} · descuento ${money(b.quote.discountClp)}</small>` : ""}</span><span>Pagos acreditados<b>${money(b.paymentsVerifiedClp)} · saldo ${money(b.balanceClp)}</b></span></div>${b.requestStatus === "pending_price_acceptance" ? `<div class="price-accept"><b>Recepción actualizó el precio a ${money(state.managed.updatedQuoteClp)}.</b><button class="button primary" data-action="accept-price">Aceptar precio actualizado</button></div>` : ""}${b.status === "confirmed" && b.start - Date.now() >= 86400000 ? `<button class="button outline" data-action="customer-cancel">Cancelar reserva</button>` : ""}<p class="privacy">Este enlace vence en 24 horas. Su expiración no afecta la reserva.</p></article>` : state.manageLoadFailed ? renewal : `<div class="loading-card">Abriendo tu enlace seguro…</div>`}</section>`,
   );
 }
 function renderLogin() {
@@ -617,6 +662,46 @@ async function loadAdmin() {
   state.outbox = outbox.emails;
   render();
 }
+function dynamicConfigFromForm(form: HTMLFormElement | null) {
+  if (!form) throw new Error("No encontramos el formulario de precio dinámico.");
+  const d = new FormData(form);
+  const value = (name: string) => fieldValue(d.get(name));
+  const optionalInt = (name: string) => {
+    const raw = value(name).trim();
+    return raw === "" ? null : Number(raw);
+  };
+  const current = state.settings?.dynamicPricing ?? {};
+  return {
+    mode: value("mode"),
+    floorClpPerLaneHour: optionalInt("floor"),
+    maxDiscountPercent: Number(value("maxPercent")),
+    maxDiscountClpPerLaneHour: optionalInt("maxAbsolute"),
+    advanceWindowHours: Number(value("advanceWindow")),
+    lowOccupancyThresholdPercent: Number(value("lowOccupancy")),
+    mediumOccupancyThresholdPercent: Number(value("mediumOccupancy")),
+    dailyDiscountBudgetClp: optionalInt("dailyBudget"),
+    quoteTtlMinutes: Number(value("quoteTtl")),
+    channels: d.getAll("channels").map(String),
+    protectedWeekdays: d.getAll("protectedWeekdays").map(Number),
+    pilot: {
+      weekdays: d.getAll("pilotWeekdays").map(Number),
+      bands: current.pilot?.bands ?? [],
+    },
+    riskTiers: current.riskTiers ?? [],
+    protectedBands: current.protectedBands ?? [],
+    protectedDates: current.protectedDates ?? [],
+  };
+}
+async function saveDynamicPricing(next: any, message: string) {
+  state.pricingPreview = null;
+  await api("/api/staff/settings", {
+    method: "PUT",
+    body: JSON.stringify({ dynamicPricing: next }),
+  });
+  await loadAdmin();
+  say(`${message} Versión ${state.settings.dynamicPricing.configVersion}.`, "success");
+  render();
+}
 async function loadManage() {
   try {
     const d = await api("/api/manage", {
@@ -726,6 +811,7 @@ app.addEventListener("submit", async (event) => {
           durationMinutes: state.duration,
           laneCount: state.selected.laneCount,
           acceptSeparated: !state.selected.grouped,
+          quoteToken: state.selected.quoteToken,
           acceptTerms: d.has("terms"),
         }),
       });
@@ -896,6 +982,68 @@ app.addEventListener("submit", async (event) => {
       render();
       return;
     }
+    if (form.id === "dynamic-settings") {
+      await saveDynamicPricing(
+        dynamicConfigFromForm(form as HTMLFormElement),
+        "Precio dinámico guardado.",
+      );
+      return;
+    }
+    if (form.id === "dynamic-tier") {
+      const current = state.settings.dynamicPricing ?? {};
+      const riskTiers = [
+        ...(current.riskTiers ?? []),
+        { minPoints: +v("minPoints"), discountPercent: +v("discountPercent") },
+      ];
+      await saveDynamicPricing({ ...current, riskTiers }, "Nivel de riesgo agregado.");
+      return;
+    }
+    if (form.id === "dynamic-protected-band") {
+      const current = state.settings.dynamicPricing ?? {};
+      const protectedBands = [
+        ...(current.protectedBands ?? []),
+        { weekday: +v("weekday"), start: v("start"), end: v("end") },
+      ];
+      await saveDynamicPricing({ ...current, protectedBands }, "Franja protegida agregada.");
+      return;
+    }
+    if (form.id === "dynamic-pilot-band") {
+      const current = state.settings.dynamicPricing ?? {};
+      const pilot = {
+        ...current.pilot,
+        bands: [
+          ...(current.pilot?.bands ?? []),
+          { weekday: +v("weekday"), start: v("start"), end: v("end") },
+        ],
+      };
+      await saveDynamicPricing({ ...current, pilot }, "Franja del piloto agregada.");
+      return;
+    }
+    if (form.id === "dynamic-protected-date") {
+      const current = state.settings.dynamicPricing ?? {};
+      const protectedDates = [...(current.protectedDates ?? []), v("date")];
+      await saveDynamicPricing({ ...current, protectedDates }, "Fecha protegida agregada.");
+      return;
+    }
+    if (form.id === "dynamic-preview") {
+      const config = dynamicConfigFromForm(
+        document.querySelector<HTMLFormElement>("#dynamic-settings"),
+      );
+      const preview = await api<any>("/api/staff/pricing/preview", {
+        method: "POST",
+        body: JSON.stringify({
+          startAt: v("startAt"),
+          players: +v("players"),
+          durationMinutes: +v("durationMinutes"),
+          laneCount: v("laneCount") ? +v("laneCount") : undefined,
+          channel: v("channel"),
+          dynamicPricing: config,
+        }),
+      });
+      state.pricingPreview = preview;
+      render();
+      return;
+    }
     if (form.id === "band") {
       const rateBands = [
         ...state.settings.rateBands,
@@ -1006,6 +1154,11 @@ app.addEventListener("submit", async (event) => {
     }
   } catch (e) {
     state.loading = false;
+    if ((e as any)?.code === "quote_expired" || (e as any)?.code === "quote_unavailable") {
+      state.selected = null;
+      state.options = [];
+      state.availabilitySearched = false;
+    }
     say(errorMessage(e), "error");
     render();
     document.querySelector<HTMLElement>(".notice")?.focus({ preventScroll: true });
@@ -1702,6 +1855,37 @@ app.addEventListener("click", async (event) => {
       await loadAdmin();
       say("Excepción eliminada.", "success");
       render();
+    }
+    if (action === "remove-dynamic-tier") {
+      const current = state.settings.dynamicPricing ?? {};
+      const riskTiers = (current.riskTiers ?? []).filter(
+        (_: any, index: number) => index !== Number(target.dataset.index ?? "-1"),
+      );
+      await saveDynamicPricing({ ...current, riskTiers }, "Nivel de riesgo eliminado.");
+    }
+    if (action === "remove-dynamic-protected-band") {
+      const current = state.settings.dynamicPricing ?? {};
+      const protectedBands = (current.protectedBands ?? []).filter(
+        (_: any, index: number) => index !== Number(target.dataset.index ?? "-1"),
+      );
+      await saveDynamicPricing({ ...current, protectedBands }, "Franja protegida eliminada.");
+    }
+    if (action === "remove-dynamic-pilot-band") {
+      const current = state.settings.dynamicPricing ?? {};
+      const pilot = {
+        ...current.pilot,
+        bands: (current.pilot?.bands ?? []).filter(
+          (_: any, index: number) => index !== Number(target.dataset.index ?? "-1"),
+        ),
+      };
+      await saveDynamicPricing({ ...current, pilot }, "Franja del piloto eliminada.");
+    }
+    if (action === "remove-dynamic-protected-date") {
+      const current = state.settings.dynamicPricing ?? {};
+      const protectedDates = (current.protectedDates ?? []).filter(
+        (date: string) => date !== target.dataset.date,
+      );
+      await saveDynamicPricing({ ...current, protectedDates }, "Fecha protegida eliminada.");
     }
     if (action === "user-status") {
       const active = target.dataset.active === "true";

@@ -685,3 +685,222 @@ test("production starts closed and refuses email verification without a provider
   });
   assert.equal(email.status, 503);
 });
+
+test("dynamic pricing requires explicit configuration and honors the locked quote", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "bowling-dynamic-"));
+  const port = await freePort();
+  const base = `http://127.0.0.1:${port}`;
+  const child = spawn(
+    globalThis.process.execPath,
+    [new URL("./index.mjs", import.meta.url).pathname],
+    {
+      env: {
+        ...process.env,
+        NODE_ENV: "development",
+        MVP_MODE: "demo",
+        DATABASE_PATH: join(directory, "test.sqlite"),
+        PORT: `${port}`,
+        TOKEN_SECRET: "dynamic-tests-stable-secret-with-at-least-32-bytes",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  let output = "";
+  let errorOutput = "";
+  child.stdout.setEncoding("utf8").on("data", (chunk) => {
+    output += chunk;
+  });
+  child.stderr.setEncoding("utf8").on("data", (chunk) => {
+    errorOutput += chunk;
+  });
+  t.after(async () => {
+    child.kill("SIGTERM");
+    await Promise.race([once(child, "exit"), sleep(1500)]);
+    await rm(directory, { recursive: true, force: true });
+  });
+  let ready = false;
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    try {
+      const response = await fetch(`${base}/api/health`);
+      if (response.ok) {
+        ready = true;
+        break;
+      }
+    } catch {
+      /* wait for listener */
+    }
+    if (child.exitCode !== null) break;
+    await sleep(100);
+  }
+  assert.equal(ready, true, `API did not start: ${errorOutput}`);
+
+  const adminLogin = await fetch(`${base}/api/auth/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: "admin@demo.local", password: "BowlingDemo2026!" }),
+  });
+  assert.equal(adminLogin.status, 200);
+  const adminCookie = adminLogin.headers.get("set-cookie").split(";")[0];
+
+  const incomplete = await fetch(`${base}/api/staff/settings`, {
+    method: "PUT",
+    headers: { cookie: adminCookie, origin: base, "content-type": "application/json" },
+    body: JSON.stringify({ dynamicPricing: { mode: "active" } }),
+  });
+  assert.equal(incomplete.status, 400);
+
+  const dynamicPricing = {
+    mode: "active",
+    floorClpPerLaneHour: 8000,
+    maxDiscountPercent: 30,
+    maxDiscountClpPerLaneHour: 3000,
+    advanceWindowHours: 48,
+    lowOccupancyThresholdPercent: 50,
+    mediumOccupancyThresholdPercent: 70,
+    riskTiers: [{ minPoints: 3, discountPercent: 20 }],
+    protectedWeekdays: [],
+    protectedBands: [],
+    protectedDates: [],
+    dailyDiscountBudgetClp: 1000000,
+    quoteTtlMinutes: 20,
+    channels: ["web"],
+    pilot: { weekdays: [], bands: [] },
+  };
+  const configured = await fetch(`${base}/api/staff/settings`, {
+    method: "PUT",
+    headers: { cookie: adminCookie, origin: base, "content-type": "application/json" },
+    body: JSON.stringify({ dynamicPricing }),
+  });
+  assert.equal(configured.status, 200);
+  const configuredSettings = await configured.json();
+  assert.equal(configuredSettings.settings.dynamicPricing.mode, "active");
+  assert.equal(configuredSettings.settings.dynamicPricing.configVersion, 2);
+  assert.deepEqual(configuredSettings.settings.dynamicPricing.riskTiers, [
+    { minPoints: 3, discountPercent: 20 },
+  ]);
+
+  const date = addLocalDays(formatLocalDate(Date.now()), 1);
+  const time = "20:00";
+  const preview = await fetch(`${base}/api/staff/pricing/preview`, {
+    method: "POST",
+    headers: { cookie: adminCookie, origin: base, "content-type": "application/json" },
+    body: JSON.stringify({
+      startAt: `${date}T${time}`,
+      players: 4,
+      durationMinutes: 60,
+      laneCount: 1,
+      channel: "web",
+    }),
+  });
+  assert.equal(preview.status, 200);
+  const previewData = await preview.json();
+  assert.equal(previewData.available, true);
+  assert.equal(previewData.preview.eligible, true);
+  assert.equal(previewData.preview.potentialDiscountClp, 2400);
+  assert.equal(previewData.preview.riskPoints, 3);
+
+  const budgetPreview = await fetch(`${base}/api/staff/pricing/preview`, {
+    method: "POST",
+    headers: { cookie: adminCookie, origin: base, "content-type": "application/json" },
+    body: JSON.stringify({
+      startAt: `${date}T${time}`,
+      players: 4,
+      durationMinutes: 60,
+      laneCount: 1,
+      channel: "web",
+      dynamicPricing: { ...dynamicPricing, dailyDiscountBudgetClp: 1000 },
+    }),
+  });
+  assert.equal(budgetPreview.status, 200);
+  const budgetPreviewData = await budgetPreview.json();
+  assert.equal(budgetPreviewData.preview.potentialDiscountClp, 1000);
+
+  const availability = await fetch(
+    `${base}/api/availability?date=${date}&time=${encodeURIComponent(time)}&players=4&duration=60`,
+  );
+  assert.equal(availability.status, 200);
+  const alternatives = (await availability.json()).alternatives;
+  const option = alternatives.find((candidate) => candidate.startTime === time);
+  assert.ok(option, "the preferred time should be available");
+  assert.equal(option.quote.dynamic.applied, true);
+  assert.equal(option.quote.baseClp, 12000);
+  assert.equal(option.quote.dynamic.potentialDiscountClp, 2400);
+  assert.equal(option.quote.totalClp, 9600);
+  assert.equal(option.priceOpportunity, true);
+  assert.ok(option.quoteToken);
+  assert.ok(option.quoteExpiresAt > Date.now());
+
+  const email = "dynamic-price@example.test";
+  const marker = output.length;
+  const started = await fetch(`${base}/api/email/start`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  assert.equal(started.status, 200);
+  let code;
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const sent = output.slice(marker);
+    const match = new RegExp(
+      `Para: ${email.replaceAll(".", "\\.")}\\nAsunto:[^\\n]*\\nTu código de verificación es (\\d{6})`,
+    ).exec(sent);
+    if (match) {
+      code = match[1];
+      break;
+    }
+    await sleep(25);
+  }
+  assert.ok(code, "development email was not emitted");
+  const verified = await fetch(`${base}/api/email/complete`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email, code }),
+  });
+  assert.equal(verified.status, 200);
+  const emailProof = (await verified.json()).emailProof;
+
+  const rateChange = await fetch(`${base}/api/staff/settings`, {
+    method: "PUT",
+    headers: { cookie: adminCookie, origin: base, "content-type": "application/json" },
+    body: JSON.stringify({ generalRateClpPerLaneHour: 20000 }),
+  });
+  assert.equal(rateChange.status, 200);
+
+  const requestBody = {
+    idempotencyKey: "dynamic-locked-quote-request",
+    emailProof,
+    customerName: "Prueba precio dinámico",
+    email,
+    startAt: option.startAt,
+    startMs: option.startMs,
+    players: 4,
+    durationMinutes: 60,
+    laneCount: option.laneCount,
+    acceptSeparated: !option.grouped,
+    acceptTerms: true,
+    quoteToken: option.quoteToken,
+  };
+  const created = await fetch(`${base}/api/requests`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(requestBody),
+  });
+  assert.equal(created.status, 201);
+  const createdData = await created.json();
+  assert.equal(createdData.quote.baseClp, 12000);
+  assert.equal(createdData.quote.dynamic.discountClp, 2400);
+  assert.equal(createdData.quote.totalClp, 9600);
+  assert.equal(createdData.quote.pricingSource, "dynamic");
+
+  const tamperedToken = `${option.quoteToken.slice(0, -1)}${option.quoteToken.endsWith("a") ? "b" : "a"}`;
+  const tampered = await fetch(`${base}/api/requests`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      ...requestBody,
+      idempotencyKey: "dynamic-tampered-quote-request",
+      quoteToken: tamperedToken,
+    }),
+  });
+  assert.equal(tampered.status, 400);
+});

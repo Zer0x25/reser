@@ -21,6 +21,8 @@ export {
 export const LANE_COUNT = 12;
 export const MAX_PLAYERS_PER_LANE = 6;
 export const DEFAULT_PREPARATION_MINUTES = 10;
+export const DYNAMIC_PRICING_MODES = ["off", "shadow", "pilot", "active"];
+export const DYNAMIC_PRICING_RULE_VERSION = "bounded-orphan-risk-v1";
 
 export function isWholeHourBookingDuration(durationMinutes) {
   return (
@@ -114,7 +116,322 @@ export function matchesHours(startMs, endMs, weeklyHours, exceptions = {}) {
   return Boolean(operatingHoursForInterval(startMs, endMs, weeklyHours, exceptions));
 }
 
-export function calculateQuote({ startMs, durationMinutes, laneCount, settings, channel = "web" }) {
+const MINUTE_MS = 60_000;
+const HOUR_MS = 3_600_000;
+
+function clampPercent(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(0, Math.min(100, number)) : fallback;
+}
+
+function occupancySignals({ startMs, endMs, reservations, blocks }) {
+  const windowStart = startMs - 2 * HOUR_MS;
+  const windowEnd = endMs + 2 * HOUR_MS;
+  const windowMs = windowEnd - windowStart;
+  let soldMs = 0;
+  for (const reservation of reservations ?? []) {
+    const from = Math.max(windowStart, reservation.startMs);
+    const to = Math.min(windowEnd, reservation.endMs);
+    if (to > from) soldMs += (to - from) * (reservation.lanes?.length ?? 0);
+  }
+  let blockedMs = 0;
+  for (const block of blocks ?? []) {
+    const from = Math.max(windowStart, block.startMs);
+    const to = Math.min(windowEnd, block.endMs);
+    if (to > from) blockedMs += (to - from) * (block.laneId == null ? LANE_COUNT : 1);
+  }
+  const capacityMs = Math.max(0, LANE_COUNT * windowMs - blockedMs);
+  return {
+    occupancyPercent: capacityMs > 0 ? Math.round((soldMs / capacityMs) * 100) : 0,
+    soldLaneMinutes: Math.round(soldMs / MINUTE_MS),
+    capacityLaneMinutes: Math.round(capacityMs / MINUTE_MS),
+    windowStartMs: windowStart,
+    windowEndMs: windowEnd,
+  };
+}
+
+function gapSignals({ startMs, endMs, lanes, reservations, blocks, settings }) {
+  const preparationMs =
+    Number(settings.preparationMinutes ?? DEFAULT_PREPARATION_MINUTES) * MINUTE_MS;
+  const minimumUsefulMs = HOUR_MS + preparationMs;
+  const day = parseLocalDay(formatLocalDate(startMs));
+  const details = [];
+  let gapRisk = false;
+  let doubleGapRisk = false;
+  for (const lane of lanes ?? []) {
+    const intervals = [];
+    for (const reservation of reservations ?? []) {
+      if (!reservation.lanes?.includes(lane)) continue;
+      intervals.push({
+        startMs: reservation.startMs,
+        endMs:
+          reservation.endMs +
+          Number(reservation.preparationMinutes ?? settings.preparationMinutes ?? 0) * MINUTE_MS,
+      });
+    }
+    for (const block of blocks ?? []) {
+      if (block.laneId !== lane && block.laneId != null) continue;
+      intervals.push({ startMs: block.startMs, endMs: block.endMs });
+    }
+    const previous = intervals
+      .filter((interval) => interval.endMs <= startMs)
+      .sort((a, b) => b.endMs - a.endMs)[0];
+    const next = intervals
+      .filter((interval) => interval.startMs >= endMs + preparationMs)
+      .sort((a, b) => a.startMs - b.startMs)[0];
+    const beforeGapMs = startMs - (previous?.endMs ?? day.start);
+    const afterGapMs = (next?.startMs ?? day.end) - (endMs + preparationMs);
+    const beforeOrphan = beforeGapMs > 0 && beforeGapMs < minimumUsefulMs;
+    const afterOrphan = afterGapMs > 0 && afterGapMs < minimumUsefulMs;
+    const laneRisk = beforeOrphan || afterOrphan;
+    if (laneRisk) gapRisk = true;
+    if (beforeOrphan && afterOrphan) doubleGapRisk = true;
+    details.push({
+      lane,
+      beforeGapMinutes: Math.round(beforeGapMs / MINUTE_MS),
+      afterGapMinutes: Math.round(afterGapMs / MINUTE_MS),
+      orphan: laneRisk,
+    });
+  }
+  return { gapRisk, doubleGapRisk, gapDetails: details };
+}
+
+function pilotEligible(config, weekday, localTime) {
+  const weekdays = Array.isArray(config.pilot?.weekdays) ? config.pilot.weekdays : [];
+  if (weekdays.includes(weekday)) return true;
+  return (Array.isArray(config.pilot?.bands) ? config.pilot.bands : []).some(
+    (band) => Number(band.weekday) === weekday && localTime >= band.start && localTime < band.end,
+  );
+}
+
+/**
+ * Evaluates whether a concrete free slot is an orphan-risk candidate.
+ * It is deliberately deterministic and explainable: no client data, no ML and no
+ * price manipulation. The returned object is data; calculateQuote decides the money.
+ */
+export function evaluateOrphanRisk({
+  startMs,
+  endMs,
+  lanes,
+  reservations = [],
+  blocks = [],
+  settings,
+  channel = "web",
+  now = Date.now(),
+  budgetRemainingClp = Number.MAX_SAFE_INTEGER,
+  impact = null,
+}) {
+  const config = settings?.dynamicPricing;
+  if (!config || config.mode === "off" || !DYNAMIC_PRICING_MODES.includes(config.mode)) return null;
+  const configVersion = Number(config.configVersion ?? 0);
+  const signals = {
+    protected: false,
+    channelEnabled: false,
+    pilotEligible: false,
+    occupancyPercent: null,
+    leadTimeHours: null,
+    gapRisk: false,
+    futureValueRisk: false,
+    budgetRemainingClp,
+  };
+  const result = (eligible, riskPoints, tier, reasonCode, reason, extra = {}) => ({
+    eligible,
+    riskPoints,
+    tier,
+    reasonCode,
+    reason,
+    signals: { ...signals, ...extra },
+    configVersion,
+    mode: config.mode,
+    show: config.mode === "active" || config.mode === "pilot",
+    ruleVersion: DYNAMIC_PRICING_RULE_VERSION,
+  });
+  const ineligible = (reasonCode, reason, extra = {}) =>
+    result(false, 0, null, reasonCode, reason, extra);
+  const date = formatLocalDate(startMs);
+  const weekday = santiagoWeekday(startMs);
+  const localTime = formatLocalTime(startMs);
+  if ((config.protectedDates ?? []).includes(date)) {
+    signals.protected = true;
+    return ineligible("protected_date", "Fecha protegida por administración", { protected: true });
+  }
+  if ((config.protectedWeekdays ?? []).map(Number).includes(weekday)) {
+    signals.protected = true;
+    return ineligible("protected_weekday", "Día protegido por administración", { protected: true });
+  }
+  if (
+    (config.protectedBands ?? []).some(
+      (band) => Number(band.weekday) === weekday && localTime >= band.start && localTime < band.end,
+    )
+  ) {
+    signals.protected = true;
+    return ineligible("protected_band", "Franja protegida por administración", { protected: true });
+  }
+  if (config.mode === "pilot" && !pilotEligible(config, weekday, localTime))
+    return ineligible("outside_pilot", "Horario fuera del alcance del piloto");
+  signals.pilotEligible = config.mode !== "pilot" || pilotEligible(config, weekday, localTime);
+  const channels = Array.isArray(config.channels) ? config.channels : [];
+  if (!channels.includes(channel))
+    return ineligible("channel_not_enabled", "Canal no habilitado para precio dinámico");
+  signals.channelEnabled = true;
+  if (!Number.isSafeInteger(config.floorClpPerLaneHour) || config.floorClpPerLaneHour <= 0)
+    return ineligible("floor_missing", "Falta configurar el piso dinámico");
+  if (startMs < now) return ineligible("past_start", "El horario ya comenzó");
+  const leadTimeHours = (startMs - now) / HOUR_MS;
+  const advanceWindowHours = Number(config.advanceWindowHours);
+  if (!Number.isFinite(advanceWindowHours) || leadTimeHours > advanceWindowHours)
+    return ineligible("outside_advance_window", "Fuera de la ventana de anticipación configurada", {
+      leadTimeHours: Math.round(leadTimeHours * 10) / 10,
+    });
+  if (budgetRemainingClp <= 0)
+    return ineligible("budget_exhausted", "Presupuesto diario de descuento agotado", {
+      leadTimeHours: Math.round(leadTimeHours * 10) / 10,
+    });
+  const occupancy = occupancySignals({ startMs, endMs, reservations, blocks });
+  const gaps = gapSignals({
+    startMs,
+    endMs,
+    lanes,
+    reservations,
+    blocks,
+    settings,
+  });
+  const lowThreshold = clampPercent(config.lowOccupancyThresholdPercent, 50);
+  const mediumThreshold = clampPercent(config.mediumOccupancyThresholdPercent, 70);
+  const futureValueRisk =
+    Array.isArray(impact) &&
+    impact[0] === 0 &&
+    impact[1] === 0 &&
+    occupancy.occupancyPercent >= mediumThreshold;
+  Object.assign(signals, occupancy, gaps, {
+    leadTimeHours: Math.round(leadTimeHours * 10) / 10,
+    futureValueRisk,
+  });
+  if (futureValueRisk)
+    return ineligible("future_value", "El horario compromete capacidad futura valiosa");
+  let riskPoints = 0;
+  if (occupancy.occupancyPercent < lowThreshold) riskPoints += 2;
+  else if (occupancy.occupancyPercent < mediumThreshold) riskPoints += 1;
+  if (leadTimeHours <= 24) riskPoints += 1;
+  else if (leadTimeHours <= 48 && occupancy.occupancyPercent < lowThreshold) riskPoints += 1;
+  if (gaps.gapRisk) riskPoints += 1;
+  if (gaps.doubleGapRisk) riskPoints += 1;
+  const tiers = (Array.isArray(config.riskTiers) ? config.riskTiers : [])
+    .filter(
+      (tier) =>
+        Number.isSafeInteger(tier.minPoints) &&
+        tier.minPoints >= 1 &&
+        Number.isSafeInteger(tier.discountPercent) &&
+        tier.discountPercent > 0,
+    )
+    .sort((a, b) => b.minPoints - a.minPoints);
+  const tier = tiers.find((candidate) => riskPoints >= candidate.minPoints) ?? null;
+  if (!tier)
+    return result(
+      false,
+      riskPoints,
+      null,
+      "risk_below_threshold",
+      "Riesgo insuficiente para un descuento",
+    );
+  const reasonCode = gaps.gapRisk
+    ? "gap_fill"
+    : leadTimeHours <= 24
+      ? "last_minute"
+      : "low_occupancy";
+  const reason =
+    reasonCode === "gap_fill"
+      ? "Completa un hueco de baja demanda"
+      : reasonCode === "last_minute"
+        ? "Último minuto con baja ocupación"
+        : "Baja ocupación en esta franja";
+  return result(true, riskPoints, tier, reasonCode, reason);
+}
+
+function dynamicPricingForQuote({
+  baseClp,
+  durationMinutes,
+  laneCount,
+  settings,
+  risk,
+  promotionDiscountClp,
+}) {
+  if (!risk || !settings?.dynamicPricing) return null;
+  const config = settings.dynamicPricing;
+  const tier = risk.tier;
+  const hours = durationMinutes / 60;
+  const floorTotalClp = Number.isSafeInteger(config.floorClpPerLaneHour)
+    ? Math.ceil(config.floorClpPerLaneHour * laneCount * hours)
+    : null;
+  const maxPercentDiscountClp = Math.floor(
+    (baseClp * clampPercent(config.maxDiscountPercent, 0)) / 100,
+  );
+  const maxAbsoluteDiscountClp = Number.isSafeInteger(config.maxDiscountClpPerLaneHour)
+    ? Math.floor(config.maxDiscountClpPerLaneHour * laneCount * hours)
+    : Number.MAX_SAFE_INTEGER;
+  const maxByFloorClp = floorTotalClp == null ? 0 : Math.max(0, baseClp - floorTotalClp);
+  const budgetRemainingClp = Number.isFinite(risk.signals?.budgetRemainingClp)
+    ? Math.max(0, Math.floor(risk.signals.budgetRemainingClp))
+    : Number.MAX_SAFE_INTEGER;
+  const requestedClp =
+    risk.eligible && tier ? Math.floor((baseClp * clampPercent(tier.discountPercent, 0)) / 100) : 0;
+  const potentialDiscountClp = Math.max(
+    0,
+    Math.min(
+      requestedClp,
+      maxPercentDiscountClp,
+      maxAbsoluteDiscountClp,
+      maxByFloorClp,
+      budgetRemainingClp,
+    ),
+  );
+  const applied =
+    risk.show === true && potentialDiscountClp > 0 && potentialDiscountClp > promotionDiscountClp;
+  return {
+    ...risk,
+    applied,
+    shadow: config.mode === "shadow",
+    discountPercent: tier?.discountPercent ?? 0,
+    discountClp: applied ? potentialDiscountClp : 0,
+    potentialDiscountClp,
+    totalAfterDiscountClp: Math.max(0, baseClp - potentialDiscountClp),
+    floorTotalClp,
+    maxDiscountPercent: config.maxDiscountPercent,
+    maxDiscountClpPerLaneHour: config.maxDiscountClpPerLaneHour ?? null,
+    configVersion: Number(config.configVersion ?? 0),
+  };
+}
+
+export function pricingConfigSnapshot(settings) {
+  const config = settings?.dynamicPricing ?? {};
+  return {
+    mode: config.mode ?? "off",
+    configVersion: Number(config.configVersion ?? 0),
+    floorClpPerLaneHour: config.floorClpPerLaneHour ?? null,
+    maxDiscountPercent: config.maxDiscountPercent ?? null,
+    maxDiscountClpPerLaneHour: config.maxDiscountClpPerLaneHour ?? null,
+    advanceWindowHours: config.advanceWindowHours ?? null,
+    lowOccupancyThresholdPercent: config.lowOccupancyThresholdPercent ?? null,
+    mediumOccupancyThresholdPercent: config.mediumOccupancyThresholdPercent ?? null,
+    riskTiers: Array.isArray(config.riskTiers) ? config.riskTiers : [],
+    protectedWeekdays: Array.isArray(config.protectedWeekdays) ? config.protectedWeekdays : [],
+    protectedBands: Array.isArray(config.protectedBands) ? config.protectedBands : [],
+    protectedDates: Array.isArray(config.protectedDates) ? config.protectedDates : [],
+    dailyDiscountBudgetClp: config.dailyDiscountBudgetClp ?? null,
+    quoteTtlMinutes: config.quoteTtlMinutes ?? null,
+    channels: Array.isArray(config.channels) ? config.channels : [],
+    pilot: config.pilot ?? { weekdays: [], bands: [] },
+  };
+}
+
+export function calculateQuote({
+  startMs,
+  durationMinutes,
+  laneCount,
+  settings,
+  channel = "web",
+  risk = null,
+}) {
   const generalRate = Number(settings.generalRateClpPerLaneHour ?? 0);
   if (!Number.isSafeInteger(generalRate) || generalRate < 0)
     throw new Error("Tarifa base inválida.");
@@ -161,7 +478,7 @@ export function calculateQuote({ startMs, durationMinutes, laneCount, settings, 
       return false;
     return true;
   });
-  let discountClp = 0;
+  let promotionDiscountClp = 0;
   let promotionName = null;
   for (const promotion of promotions) {
     const eligibleNumerator =
@@ -179,16 +496,37 @@ export function calculateQuote({ startMs, durationMinutes, laneCount, settings, 
       promotion.kind === "percent"
         ? Math.floor((eligibleBase * Math.max(0, Math.min(100, promotion.value))) / 100)
         : Math.min(eligibleBase, Math.max(0, Math.round(promotion.value)));
-    if (benefit > discountClp) {
-      discountClp = benefit;
+    if (benefit > promotionDiscountClp) {
+      promotionDiscountClp = benefit;
       promotionName = promotion.name;
     }
   }
-  return {
+  const dynamic = dynamicPricingForQuote({
     baseClp,
+    durationMinutes,
+    laneCount,
+    settings,
+    risk,
+    promotionDiscountClp,
+  });
+  const dynamicDiscountClp = dynamic?.applied === true ? dynamic.discountClp : 0;
+  const promotionApplied = promotionDiscountClp >= dynamicDiscountClp;
+  const discountClp = Math.max(promotionDiscountClp, dynamicDiscountClp);
+  return {
+    version: 2,
+    baseClp,
+    catalogPriceClp: baseClp,
     discountClp,
     totalClp: Math.max(0, baseClp - discountClp),
-    promotionName,
+    promotionName: promotionApplied ? promotionName : null,
+    promotionDiscountClp: promotionApplied ? promotionDiscountClp : 0,
+    pricingSource:
+      dynamicDiscountClp > 0
+        ? "dynamic"
+        : promotionApplied && promotionDiscountClp > 0
+          ? "promotion"
+          : "catalog",
+    dynamic,
     segments,
   };
 }
@@ -294,6 +632,8 @@ export function findAlternatives({
   settings,
   limit = 8,
   channel = "web",
+  now = Date.now(),
+  budgetRemainingClp = Number.MAX_SAFE_INTEGER,
 }) {
   const minLanes = minimumLanes(players);
   const laneCount = contractedLanes ?? minLanes;
@@ -336,7 +676,7 @@ export function findAlternatives({
         )
       )
         continue;
-      const future = startMs - Date.now() < settings.minimumAdvanceMinutes * 60_000;
+      const future = startMs - now < settings.minimumAdvanceMinutes * 60_000;
       if (future && !settings.allowImmediateWeb) continue;
       let chosen = null;
       for (const group of sets) {
@@ -367,7 +707,26 @@ export function findAlternatives({
           chosen = { lanes: group, impact };
       }
       if (chosen) {
-        const quote = calculateQuote({ startMs, durationMinutes, laneCount, settings, channel });
+        const risk = evaluateOrphanRisk({
+          startMs,
+          endMs,
+          lanes: chosen.lanes,
+          reservations,
+          blocks,
+          settings,
+          channel,
+          now,
+          budgetRemainingClp,
+          impact: chosen.impact,
+        });
+        const quote = calculateQuote({
+          startMs,
+          durationMinutes,
+          laneCount,
+          settings,
+          channel,
+          risk,
+        });
         candidates.push({
           startMs,
           endMs,
@@ -377,6 +736,7 @@ export function findAlternatives({
           grouped: isPhysicallyGrouped(chosen.lanes),
           impact: chosen.impact,
           quote,
+          priceOpportunity: quote.dynamic?.applied === true,
           distanceMinutes: Math.abs(startMs - startTime) / 60_000,
         });
       }
@@ -394,9 +754,18 @@ export function findAlternatives({
         a.distanceMinutes - b.distanceMinutes,
     )
     .slice(0, Math.floor(limit / 2));
-  const selected = [
+  const discounted = [...candidates]
+    .filter((candidate) => candidate.priceOpportunity)
+    .sort(
+      (a, b) =>
+        a.quote.totalClp - b.quote.totalClp ||
+        a.distanceMinutes - b.distanceMinutes ||
+        a.startMs - b.startMs,
+    )
+    .slice(0, Math.max(1, Math.ceil(limit / 3)));
+  let selected = [
     ...new Map(
-      [...nearest, ...optimizer].map((candidate) => [candidate.startMs, candidate]),
+      [...nearest, ...optimizer, ...discounted].map((candidate) => [candidate.startMs, candidate]),
     ).values(),
   ]
     .sort(
@@ -407,6 +776,15 @@ export function findAlternatives({
         a.startMs - b.startMs,
     )
     .slice(0, limit);
+  if (discounted.length && !selected.some((candidate) => candidate.priceOpportunity)) {
+    const replacement = discounted.find(
+      (candidate) => !selected.some((chosen) => chosen.startMs === candidate.startMs),
+    );
+    if (replacement)
+      selected = [...selected.slice(0, Math.max(0, limit - 1)), replacement].sort(
+        (a, b) => a.distanceMinutes - b.distanceMinutes || a.startMs - b.startMs,
+      );
+  }
   return selected.map(({ impact, ...candidate }, index) => ({
     ...candidate,
     rank: index + 1,
@@ -425,6 +803,8 @@ export function selectLaneSetAtTime({
   settings,
   channel = "web",
   preferredLaneId,
+  now = Date.now(),
+  budgetRemainingClp = Number.MAX_SAFE_INTEGER,
 }) {
   const laneCount = contractedLanes ?? minimumLanes(players);
   const sets = laneSetsFor(players, laneCount, acceptSeparated).filter(
@@ -462,7 +842,26 @@ export function selectLaneSetAtTime({
       blocks,
       settings,
     });
-    const quote = calculateQuote({ startMs, durationMinutes, laneCount, settings, channel });
+    const risk = evaluateOrphanRisk({
+      startMs,
+      endMs,
+      lanes,
+      reservations,
+      blocks,
+      settings,
+      channel,
+      now,
+      budgetRemainingClp,
+      impact,
+    });
+    const quote = calculateQuote({
+      startMs,
+      durationMinutes,
+      laneCount,
+      settings,
+      channel,
+      risk,
+    });
     if (
       !chosen ||
       compareVector(impact, chosen.preservationScore) < 0 ||
@@ -481,6 +880,7 @@ export function selectLaneSetAtTime({
         grouped: isPhysicallyGrouped(lanes),
         quote,
         preservationScore: impact,
+        priceOpportunity: quote.dynamic?.applied === true,
       };
     }
   }

@@ -4406,3 +4406,85 @@ footer {
     min-height: 34px;
   }
 }
+
+/* Bounded dynamic pricing */
+.price-base {
+  text-decoration: line-through;
+  color: #8b9499;
+  font-weight: 500;
+}
+.promo.dynamic {
+  color: #21664e;
+  font-weight: 600;
+}
+.quote-lock {
+  margin: 12px 0 4px;
+  padding: 10px 12px;
+  border: 1px solid #dbe8df;
+  border-radius: 8px;
+  background: #f4faf6;
+  color: #4d6258;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.checkbox-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 16px;
+  margin: 8px 0 18px;
+}
+.checkbox-grid .check-row {
+  margin: 0;
+}
+.admin-stack {
+  display: grid;
+  gap: 18px;
+  align-content: start;
+}
+.dynamic-simulator {
+  margin-top: 18px;
+}
+.pricing-preview {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid #cde4d7;
+  border-radius: 10px;
+  background: #f0f8f3;
+}
+.pricing-preview > b {
+  font: 700 18px var(--serif);
+  color: #183c35;
+}
+.pricing-preview p {
+  margin: 6px 0 0;
+  font-size: 12px;
+}
+.pricing-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 12px 0;
+}
+.pricing-preview-grid span {
+  display: grid;
+  gap: 4px;
+  color: #66756d;
+  font-size: 11px;
+}
+.pricing-preview-grid b {
+  color: #183c35;
+  font: 700 17px var(--serif);
+}
+.pricing-preview small {
+  display: block;
+  margin-top: 6px;
+  color: #4d6258;
+  font-size: 11px;
+  line-height: 1.5;
+}
+@media (max-width: 720px) {
+  .checkbox-grid,
+  .pricing-preview-grid {
+    grid-template-columns: 1fr;
+  }
+}

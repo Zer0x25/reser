@@ -5,6 +5,7 @@ import {
   chooseClosest,
   chooseCompact,
   chooseFirstAvailable,
+  evaluateOrphanRisk,
   formatLocalTime,
   findAlternatives,
   isLaneSetFree,
@@ -509,4 +510,256 @@ test("engine recommendation preserves more future capacity than the nearest-time
     );
   }
   assert.deepEqual(chooseClosest(options, preferredStart).preservationScore, [3, 3, 1, 3]);
+});
+
+test("dynamic pricing is bounded by floor, percentage, absolute cap and never stacks with a promotion", () => {
+  const startMs = localDateTimeToEpoch("2026-10-30T18:00");
+  const dynamicPricing = {
+    mode: "active",
+    configVersion: 4,
+    floorClpPerLaneHour: 10000,
+    maxDiscountPercent: 80,
+    maxDiscountClpPerLaneHour: null,
+    advanceWindowHours: 48,
+    lowOccupancyThresholdPercent: 50,
+    mediumOccupancyThresholdPercent: 70,
+    riskTiers: [{ minPoints: 3, discountPercent: 50 }],
+    protectedWeekdays: [],
+    protectedBands: [],
+    protectedDates: [],
+    dailyDiscountBudgetClp: 100000,
+    quoteTtlMinutes: 20,
+    channels: ["web"],
+    pilot: { weekdays: [], bands: [] },
+  };
+  const risk = {
+    eligible: true,
+    riskPoints: 4,
+    tier: { minPoints: 3, discountPercent: 50 },
+    reasonCode: "low_occupancy",
+    reason: "Baja ocupación en esta franja",
+    signals: { budgetRemainingClp: 100000 },
+    configVersion: 4,
+    mode: "active",
+    show: true,
+    ruleVersion: "bounded-orphan-risk-v1",
+  };
+  const quote = (overrides = {}, promotion = {}) =>
+    calculateQuote({
+      startMs,
+      durationMinutes: 60,
+      laneCount: 1,
+      risk,
+      settings: {
+        ...settings,
+        promotions: promotion.promotions ?? [],
+        dynamicPricing: { ...dynamicPricing, ...overrides },
+      },
+    });
+
+  const floorLimited = quote();
+  assert.equal(floorLimited.baseClp, 12000);
+  assert.equal(floorLimited.dynamic.potentialDiscountClp, 2000);
+  assert.equal(floorLimited.dynamic.totalAfterDiscountClp, 10000);
+  assert.equal(floorLimited.totalClp, 10000);
+  assert.equal(floorLimited.pricingSource, "dynamic");
+
+  const percentLimited = quote({ floorClpPerLaneHour: 1000, maxDiscountPercent: 20 });
+  assert.equal(percentLimited.dynamic.potentialDiscountClp, 2400);
+  assert.equal(percentLimited.totalClp, 9600);
+
+  const absoluteLimited = quote({
+    floorClpPerLaneHour: 1000,
+    maxDiscountPercent: 80,
+    maxDiscountClpPerLaneHour: 500,
+  });
+  assert.equal(absoluteLimited.dynamic.potentialDiscountClp, 500);
+  assert.equal(absoluteLimited.totalClp, 11500);
+
+  const promotionWins = quote(
+    { floorClpPerLaneHour: 1000, maxDiscountPercent: 80 },
+    {
+      promotions: [
+        {
+          name: "Mitad de precio",
+          kind: "percent",
+          value: 50,
+          enabled: true,
+          startsAt: startMs - 1,
+          endsAt: startMs + 60 * 60_000,
+          channel: "web",
+        },
+      ],
+    },
+  );
+  assert.equal(promotionWins.totalClp, 6000);
+  assert.equal(promotionWins.pricingSource, "promotion");
+  assert.equal(promotionWins.dynamic.applied, false);
+  assert.equal(promotionWins.discountClp, 6000);
+
+  const dynamicWins = quote(
+    { floorClpPerLaneHour: 1000, maxDiscountPercent: 80 },
+    {
+      promotions: [
+        {
+          name: "Bono fijo",
+          kind: "fixed",
+          value: 1000,
+          enabled: true,
+          startsAt: startMs - 1,
+          endsAt: startMs + 60 * 60_000,
+          channel: "web",
+        },
+      ],
+    },
+  );
+  assert.equal(dynamicWins.totalClp, 6000);
+  assert.equal(dynamicWins.pricingSource, "dynamic");
+  assert.equal(dynamicWins.promotionName, null);
+
+  const shadow = calculateQuote({
+    startMs,
+    durationMinutes: 60,
+    laneCount: 1,
+    risk: { ...risk, mode: "shadow", show: false },
+    settings: {
+      ...settings,
+      dynamicPricing: {
+        ...dynamicPricing,
+        mode: "shadow",
+        floorClpPerLaneHour: 1000,
+      },
+    },
+  });
+  assert.equal(shadow.totalClp, 12000);
+  assert.equal(shadow.dynamic.applied, false);
+  assert.equal(shadow.dynamic.potentialDiscountClp, 6000);
+  assert.equal(shadow.pricingSource, "catalog");
+});
+
+test("orphan risk protects configured slots and can fill a real gap", () => {
+  const friday = "2026-10-30";
+  const startMs = localDateTimeToEpoch(`${friday}T18:00`);
+  const endMs = startMs + 60 * 60_000;
+  const dynamicPricing = {
+    mode: "active",
+    configVersion: 2,
+    floorClpPerLaneHour: 8000,
+    maxDiscountPercent: 30,
+    maxDiscountClpPerLaneHour: null,
+    advanceWindowHours: 48,
+    lowOccupancyThresholdPercent: 50,
+    mediumOccupancyThresholdPercent: 70,
+    riskTiers: [
+      { minPoints: 3, discountPercent: 10 },
+      { minPoints: 5, discountPercent: 30 },
+    ],
+    protectedWeekdays: [],
+    protectedBands: [],
+    protectedDates: [],
+    dailyDiscountBudgetClp: 100000,
+    quoteTtlMinutes: 20,
+    channels: ["web"],
+    pilot: { weekdays: [], bands: [] },
+  };
+  const base = { ...settings, dynamicPricing };
+  const evaluate = (overrides = {}, extra = {}) =>
+    evaluateOrphanRisk({
+      startMs,
+      endMs,
+      lanes: [1],
+      reservations: extra.reservations ?? [],
+      blocks: extra.blocks ?? [],
+      settings: { ...base, dynamicPricing: { ...dynamicPricing, ...overrides } },
+      now: startMs - 6 * 60 * 60_000,
+      budgetRemainingClp: 100000,
+      impact: extra.impact ?? [1, 1, 1, 1],
+    });
+
+  const lowDemand = evaluate();
+  assert.equal(lowDemand.eligible, true);
+  assert.equal(lowDemand.riskPoints, 3);
+  assert.deepEqual(lowDemand.tier, { minPoints: 3, discountPercent: 10 });
+  assert.equal(lowDemand.signals.occupancyPercent, 0);
+
+  const protectedWeekday = evaluate({ protectedWeekdays: [5] });
+  assert.equal(protectedWeekday.eligible, false);
+  assert.equal(protectedWeekday.reasonCode, "protected_weekday");
+
+  const protectedBand = evaluate({
+    protectedBands: [{ weekday: 5, start: "18:00", end: "19:00" }],
+  });
+  assert.equal(protectedBand.eligible, false);
+  assert.equal(protectedBand.reasonCode, "protected_band");
+
+  const previous = {
+    lanes: [1],
+    startMs: startMs - 90 * 60_000,
+    endMs: startMs - 30 * 60_000,
+    preparationMinutes: 0,
+  };
+  const next = {
+    lanes: [1],
+    startMs: endMs + 30 * 60_000,
+    endMs: endMs + 90 * 60_000,
+    preparationMinutes: 0,
+  };
+  const gap = evaluate({}, { reservations: [previous, next] });
+  assert.equal(gap.eligible, true);
+  assert.equal(gap.signals.gapRisk, true);
+  assert.equal(gap.signals.doubleGapRisk, true);
+  assert.equal(gap.riskPoints, 5);
+  assert.equal(gap.tier.discountPercent, 30);
+
+  const fullWindow = Array.from({ length: 12 }, (_, index) => ({
+    lanes: [index + 1],
+    startMs: startMs - 2 * 60 * 60_000,
+    endMs: endMs + 2 * 60 * 60_000,
+    preparationMinutes: 0,
+  }));
+  const futureValue = evaluate({}, { reservations: fullWindow, impact: [0, 0, 0, 0] });
+  assert.equal(futureValue.eligible, false);
+  assert.equal(futureValue.reasonCode, "future_value");
+});
+
+test("alternatives expose a bounded dynamic price as an explicit option", () => {
+  const date = "2026-10-30";
+  const now = localDateTimeToEpoch(`${date}T12:00`);
+  const dynamicPricing = {
+    mode: "active",
+    configVersion: 1,
+    floorClpPerLaneHour: 8000,
+    maxDiscountPercent: 30,
+    maxDiscountClpPerLaneHour: null,
+    advanceWindowHours: 48,
+    lowOccupancyThresholdPercent: 50,
+    mediumOccupancyThresholdPercent: 70,
+    riskTiers: [{ minPoints: 3, discountPercent: 10 }],
+    protectedWeekdays: [],
+    protectedBands: [],
+    protectedDates: [],
+    dailyDiscountBudgetClp: 100000,
+    quoteTtlMinutes: 20,
+    channels: ["web"],
+    pilot: { weekdays: [], bands: [] },
+  };
+  const options = findAlternatives({
+    date,
+    preferredTime: "18:00",
+    players: 4,
+    durationMinutes: 60,
+    reservations: [],
+    blocks: [],
+    settings: { ...settings, dynamicPricing },
+    limit: 6,
+    now,
+    budgetRemainingClp: 100000,
+  });
+  const discounted = options.filter((option) => option.priceOpportunity);
+  assert.ok(discounted.length > 0);
+  for (const option of discounted) {
+    assert.equal(option.quote.dynamic.applied, true);
+    assert.equal(option.quote.dynamic.potentialDiscountClp, 1200);
+    assert.equal(option.quote.totalClp, 10800);
+  }
 });

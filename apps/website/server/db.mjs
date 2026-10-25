@@ -3,7 +3,13 @@ import { randomUUID, scryptSync } from "node:crypto";
 import { mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { formatLocalDate, laneSetsFor, localDateTimeToEpoch, matchesHours } from "./domain.mjs";
+import {
+  formatLocalDate,
+  laneSetsFor,
+  localDateTimeToEpoch,
+  matchesHours,
+  parseLocalDay,
+} from "./domain.mjs";
 
 export const demoMode =
   process.env.MVP_MODE !== "production" && process.env.NODE_ENV !== "production";
@@ -23,6 +29,14 @@ if (schemaVersion < 1) {
     now,
   );
   db.exec("PRAGMA user_version = 1");
+}
+if (schemaVersion < 2) {
+  db.exec(readFileSync(new URL("./migrations/002_pricing_decisions.sql", import.meta.url), "utf8"));
+  db.prepare("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(2,?,?)").run(
+    "pricing decisions",
+    now,
+  );
+  db.exec("PRAGMA user_version = 2");
 }
 db.prepare("UPDATE email_outbox SET status='queued' WHERE status='sending'").run();
 
@@ -56,6 +70,24 @@ const defaults = {
     rateBands: [],
     rateExceptions: {},
     promotions: [],
+    dynamicPricing: {
+      mode: "off",
+      configVersion: 1,
+      floorClpPerLaneHour: null,
+      maxDiscountPercent: 30,
+      maxDiscountClpPerLaneHour: null,
+      advanceWindowHours: 48,
+      lowOccupancyThresholdPercent: 50,
+      mediumOccupancyThresholdPercent: 70,
+      riskTiers: [],
+      protectedWeekdays: [],
+      protectedBands: [],
+      protectedDates: [],
+      dailyDiscountBudgetClp: null,
+      quoteTtlMinutes: 20,
+      channels: ["web"],
+      pilot: { weekdays: [], bands: [] },
+    },
     cancellationFreeHours: 24,
     lateCancellationPenaltyClp: null,
     requireManualApprovalFromLanes: 3,
@@ -516,6 +548,28 @@ export function blocksForRange(startMs, endMs) {
     )
     .all(endMs, startMs)
     .map((row) => ({ laneId: row.lane_id, startMs: row.start_ms, endMs: row.end_ms }));
+}
+
+export function dynamicDiscountUsedForDate(date) {
+  const { start, end } = parseLocalDay(date);
+  const rows = db
+    .prepare(
+      `SELECT quote_json FROM reservations
+       WHERE start_ms >= ? AND start_ms < ?
+         AND commercial_status NOT IN ('cancelled','rejected')`,
+    )
+    .all(start, end);
+  let usedClp = 0;
+  for (const row of rows) {
+    try {
+      const quote = JSON.parse(row.quote_json);
+      if (quote.dynamic?.applied === true && Number.isSafeInteger(quote.dynamic.discountClp))
+        usedClp += Math.max(0, quote.dynamic.discountClp);
+    } catch {
+      // A malformed historical quote must not block new availability or bookings.
+    }
+  }
+  return usedClp;
 }
 
 export function getLocalToday() {

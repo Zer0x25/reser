@@ -15,16 +15,21 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import {
+  DYNAMIC_PRICING_MODES,
+  DYNAMIC_PRICING_RULE_VERSION,
   calculateQuote,
   findAlternatives,
   formatLocalDate,
   formatLocalTime,
+  isLaneSetFree,
   isWholeHourBookingDuration,
   isPhysicallyGrouped,
+  laneSetsFor,
   localDateTimeToEpoch,
   matchesHours,
   minimumLanes,
   parseLocalDay,
+  pricingConfigSnapshot,
   selectLaneSetAtTime,
 } from "./domain.mjs";
 import {
@@ -32,6 +37,7 @@ import {
   blocksForRange,
   db,
   demoMode,
+  dynamicDiscountUsedForDate,
   getSettings,
   reservationsForRange,
   saveSettings,
@@ -71,9 +77,10 @@ const mimeTypes = {
 };
 
 class HttpError extends Error {
-  constructor(status, message) {
+  constructor(status, message, code = null) {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 function digest(value) {
@@ -81,6 +88,125 @@ function digest(value) {
 }
 function randomToken(bytes = 32) {
   return randomBytes(bytes).toString("base64url");
+}
+function quoteTtlMinutesFor(settings) {
+  const value = Number(settings.dynamicPricing?.quoteTtlMinutes ?? 20);
+  return Number.isInteger(value) && value >= 5 && value <= 60 ? value : 20;
+}
+function budgetRemainingForDate(date, settings) {
+  const budget = settings.dynamicPricing?.dailyDiscountBudgetClp;
+  if (!Number.isSafeInteger(budget) || budget <= 0) return Number.MAX_SAFE_INTEGER;
+  return Math.max(0, budget - dynamicDiscountUsedForDate(date));
+}
+function signQuoteToken(payload) {
+  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const signature = createHmac("sha256", tokenSecret).update(`quote:${body}`).digest("base64url");
+  return `${body}.${signature}`;
+}
+function verifyQuoteToken(token) {
+  if (typeof token !== "string" || token.length < 20 || token.length > 250_000)
+    throw new HttpError(400, "La cotización no es válida.");
+  const [body, signature, ...rest] = token.split(".");
+  if (!body || !signature || rest.length) throw new HttpError(400, "La cotización no es válida.");
+  const expected = createHmac("sha256", tokenSecret).update(`quote:${body}`).digest("base64url");
+  const receivedBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+  if (
+    receivedBuffer.length !== expectedBuffer.length ||
+    !timingSafeEqual(receivedBuffer, expectedBuffer)
+  )
+    throw new HttpError(400, "La cotización no es válida.");
+  let payload;
+  try {
+    payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
+  } catch {
+    throw new HttpError(400, "La cotización no es válida.");
+  }
+  if (
+    !isRecord(payload) ||
+    payload.v !== 1 ||
+    payload.channel !== "web" ||
+    !Number.isSafeInteger(payload.startMs) ||
+    !Number.isSafeInteger(payload.endMs) ||
+    !Array.isArray(payload.lanes) ||
+    payload.lanes.length < 1 ||
+    payload.lanes.length > 12 ||
+    !payload.lanes.every((lane) => Number.isInteger(lane) && lane >= 1 && lane <= 12) ||
+    !isRecord(payload.quote) ||
+    !Number.isSafeInteger(payload.quote.totalClp) ||
+    payload.quote.totalClp < 0
+  )
+    throw new HttpError(400, "La cotización no es válida.");
+  if (!Number.isSafeInteger(payload.expiresAt) || payload.expiresAt <= Date.now())
+    throw new HttpError(
+      409,
+      "La cotización venció. Elige un horario y revisa el precio actualizado.",
+      "quote_expired",
+    );
+  return payload;
+}
+function publicQuote(quote) {
+  if (quote?.dynamic?.applied) return quote;
+  const safe = { ...quote };
+  delete safe.dynamic;
+  return safe;
+}
+function recordPricingDecision(
+  conn,
+  {
+    quote,
+    candidate,
+    channel,
+    reservationId,
+    offeredAt,
+    expiresAt,
+    acceptedAt = null,
+    configSnapshot,
+    configVersion,
+  },
+) {
+  if (!quote) return;
+  const dynamic = quote.dynamic ?? null;
+  const signals = dynamic
+    ? {
+        ...dynamic.signals,
+        eligible: dynamic.eligible,
+        reasonCode: dynamic.reasonCode,
+        reason: dynamic.reason,
+        tier: dynamic.tier,
+        applied: dynamic.applied,
+        shadow: dynamic.shadow,
+      }
+    : { mode: "off" };
+  conn
+    .prepare(`INSERT INTO pricing_decisions(
+      id,quote_hash,reservation_id,channel,start_ms,end_ms,lane_count,base_clp,catalog_price_clp,
+      promotion_discount_clp,dynamic_discount_clp,dynamic_potential_clp,total_clp,risk_points,
+      signals_json,config_version,config_snapshot_json,rule_version,offered_at,expires_at,accepted_at
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(
+      randomUUID(),
+      digest(JSON.stringify(quote)),
+      reservationId ?? null,
+      channel,
+      candidate.startMs,
+      candidate.endMs,
+      candidate.laneCount,
+      Number(quote.baseClp ?? 0),
+      Number(quote.catalogPriceClp ?? quote.baseClp ?? 0),
+      Number(quote.promotionDiscountClp ?? 0),
+      dynamic?.applied ? Number(dynamic.discountClp ?? 0) : 0,
+      Number(dynamic?.potentialDiscountClp ?? 0),
+      Number(quote.totalClp ?? 0),
+      dynamic ? Number(dynamic.riskPoints ?? 0) : null,
+      JSON.stringify(signals),
+      Number(configVersion ?? dynamic?.configVersion ?? 0),
+      JSON.stringify(configSnapshot ?? pricingConfigSnapshot(getSettings())),
+      dynamic?.ruleVersion ?? DYNAMIC_PRICING_RULE_VERSION,
+      Number(offeredAt ?? Date.now()),
+      expiresAt == null ? null : Number(expiresAt),
+      acceptedAt == null ? null : Number(acceptedAt),
+    );
 }
 function json(res, status, data) {
   res.writeHead(status, {
@@ -283,6 +409,7 @@ function getCandidate(startAt, data, channel = "web") {
   const durationMinutes = Number(data.durationMinutes);
   const players = Number(data.players);
   const lanes = data.laneCount == null ? minimumLanes(players) : Number(data.laneCount);
+  const now = Date.now();
   const selected = selectLaneSetAtTime({
     startMs,
     players,
@@ -293,6 +420,8 @@ function getCandidate(startAt, data, channel = "web") {
     blocks,
     settings,
     channel: channel === "staff" ? data.channel : "web",
+    now,
+    budgetRemainingClp: budgetRemainingForDate(formatLocalDate(startMs), settings),
   });
   if (!selected)
     throw new HttpError(
@@ -301,7 +430,116 @@ function getCandidate(startAt, data, channel = "web") {
     );
   if (!settings.demoMode && selected.quote.totalClp <= 0)
     throw new HttpError(503, "Recepción debe configurar una tarifa antes de aceptar reservas.");
-  return selected;
+  return { ...selected, players };
+}
+
+function quoteLockForOption({ option, players, durationMinutes, settings, now }) {
+  const expiresAt = now + quoteTtlMinutesFor(settings) * 60_000;
+  const payload = {
+    v: 1,
+    startMs: option.startMs,
+    endMs: option.endMs,
+    durationMinutes,
+    players,
+    laneCount: option.laneCount,
+    lanes: option.lanes,
+    grouped: option.grouped,
+    channel: "web",
+    quote: option.quote,
+    configVersion:
+      option.quote.dynamic?.configVersion ?? settings.dynamicPricing?.configVersion ?? 0,
+    configSnapshot: pricingConfigSnapshot(settings),
+    offeredAt: now,
+    expiresAt,
+  };
+  return { quoteToken: signQuoteToken(payload), quoteExpiresAt: expiresAt, payload };
+}
+
+function candidateFromQuoteToken(body, payload) {
+  const settings = getSettings();
+  const players = Number(body.players ?? payload.players);
+  const durationMinutes = Number(body.durationMinutes ?? payload.durationMinutes);
+  const laneCount = Number(body.laneCount ?? payload.laneCount);
+  if (players !== payload.players || durationMinutes !== payload.durationMinutes)
+    throw new HttpError(400, "La cotización no coincide con los jugadores o la duración elegidos.");
+  if (laneCount !== payload.laneCount)
+    throw new HttpError(400, "La cotización no coincide con las pistas elegidas.");
+  if (payload.grouped === false && body.acceptSeparated !== true)
+    throw new HttpError(409, "Debes aceptar pistas separadas para usar esta cotización.");
+  let localInput;
+  try {
+    localInput = requireText(body.startAt, "Fecha y hora", 16);
+  } catch (error) {
+    throw new HttpError(400, error.message);
+  }
+  if (
+    `${formatLocalDate(payload.startMs)}T${formatLocalTime(payload.startMs)}` !== localInput ||
+    (body.startMs != null && Number(body.startMs) !== payload.startMs)
+  )
+    throw new HttpError(400, "La cotización no coincide con el horario elegido.");
+  const date = formatLocalDate(payload.startMs);
+  if (!dateLimitOk(date))
+    throw new HttpError(400, "Elige una fecha dentro de los próximos 60 días.");
+  if (payload.startMs < Date.now())
+    throw new HttpError(400, "No se pueden crear reservas con hora de inicio pasada.");
+  if (!alignedToScheduleStep(payload.startMs, settings.startIntervalMinutes))
+    throw new HttpError(
+      400,
+      `El inicio debe respetar bloques de ${settings.startIntervalMinutes} minutos.`,
+    );
+  if (payload.startMs < Date.now() + settings.minimumAdvanceMinutes * 60_000)
+    throw new HttpError(400, "Las reservas web requieren al menos una hora de anticipación.");
+  const endMs = payload.startMs + durationMinutes * 60_000;
+  if (endMs !== payload.endMs)
+    throw new HttpError(400, "La cotización no coincide con el término elegido.");
+  if (
+    !matchesHours(
+      payload.startMs,
+      endMs + (settings.closingMarginMinutes ?? 0) * 60_000,
+      settings.weeklyHours,
+      settings.exceptions,
+    )
+  )
+    throw new HttpError(400, "El horario elegido no cabe en la operación actual.");
+  const validSets = laneSetsFor(players, laneCount, payload.grouped === false);
+  if (!validSets.some((lanes) => lanes.join(",") === payload.lanes.join(",")))
+    throw new HttpError(400, "La cotización no contiene una agrupación de pistas válida.");
+  const { start, end } = parseLocalDay(date);
+  const reservations = reservationsForRange(start, end + 2 * 3_600_000);
+  const blocks = blocksForRange(start, end + 2 * 3_600_000);
+  if (
+    !isLaneSetFree({
+      lanes: payload.lanes,
+      startMs: payload.startMs,
+      endMs,
+      preparationMinutes: settings.preparationMinutes,
+      reservations,
+      blocks,
+    })
+  )
+    throw new HttpError(
+      409,
+      "El horario elegido ya no está disponible. Busca alternativas actualizadas.",
+      "quote_unavailable",
+    );
+  if (!settings.demoMode && Number(payload.quote.totalClp) <= 0)
+    throw new HttpError(503, "Recepción debe configurar una tarifa antes de aceptar reservas.");
+  return {
+    startMs: payload.startMs,
+    endMs,
+    lanes: payload.lanes,
+    laneCount,
+    players,
+    minimumLanes: minimumLanes(players),
+    grouped: payload.grouped === true,
+    quote: payload.quote,
+    preservationScore: null,
+    fromQuoteToken: true,
+    offeredAt: payload.offeredAt,
+    expiresAt: payload.expiresAt,
+    configVersion: payload.configVersion,
+    configSnapshot: payload.configSnapshot,
+  };
 }
 function baseUrl() {
   const fixed = process.env.PUBLIC_APP_URL;
@@ -548,6 +786,225 @@ function validatePromotions(promotions) {
       throw new HttpError(400, "La duración máxima de la promoción debe ser mayor a la mínima.");
   }
 }
+const dynamicPricingChannels = ["web", "phone", "walk_in", "counter_future"];
+function validateDynamicBands(value, label) {
+  if (!Array.isArray(value) || value.length > 200)
+    throw new HttpError(400, `${label} debe ser una lista válida.`);
+  const bands = value.map((band) => {
+    if (
+      !isRecord(band) ||
+      !Number.isInteger(band.weekday) ||
+      band.weekday < 0 ||
+      band.weekday > 6 ||
+      !validClock(band.start) ||
+      !validClock(band.end) ||
+      band.start >= band.end
+    )
+      throw new HttpError(400, `${label} tiene un día u horario inválido.`);
+    return { weekday: band.weekday, start: band.start, end: band.end };
+  });
+  bands.sort((a, b) => a.weekday - b.weekday || a.start.localeCompare(b.start));
+  for (let i = 0; i < bands.length; i += 1)
+    for (let j = i + 1; j < bands.length; j += 1)
+      if (
+        bands[i].weekday === bands[j].weekday &&
+        bands[i].start < bands[j].end &&
+        bands[j].start < bands[i].end
+      )
+        throw new HttpError(400, `${label} no puede tener franjas superpuestas.`);
+  return bands;
+}
+function validateWeekdays(value, label) {
+  if (!Array.isArray(value) || value.length > 7)
+    throw new HttpError(400, `${label} debe ser una lista de días.`);
+  const weekdays = [...new Set(value)].sort((a, b) => a - b);
+  if (
+    weekdays.length !== value.length ||
+    weekdays.some((day) => !Number.isInteger(day) || day < 0 || day > 6)
+  )
+    throw new HttpError(400, `${label} contiene días inválidos o duplicados.`);
+  return weekdays;
+}
+function validateProtectedDates(value) {
+  if (!Array.isArray(value) || value.length > 366)
+    throw new HttpError(400, "Las fechas protegidas deben ser una lista válida.");
+  const dates = [...new Set(value)].sort((a, b) => a.localeCompare(b));
+  if (dates.length !== value.length)
+    throw new HttpError(400, "Las fechas protegidas no pueden repetirse.");
+  for (const date of dates) {
+    if (typeof date !== "string") throw new HttpError(400, "Una fecha protegida es inválida.");
+    try {
+      parseLocalDay(date);
+    } catch {
+      throw new HttpError(400, `Fecha protegida inválida: ${date}.`);
+    }
+  }
+  return dates;
+}
+function validateDynamicPricing(input, { previous = {}, generalRateClpPerLaneHour = 0 } = {}) {
+  if (!isRecord(input))
+    throw new HttpError(400, "La configuración de precio dinámico es inválida.");
+  if (input.pilot != null && !isRecord(input.pilot))
+    throw new HttpError(400, "El alcance del piloto debe tener formato de objeto.");
+  const mode = input.mode ?? previous.mode ?? "off";
+  if (!DYNAMIC_PRICING_MODES.includes(mode))
+    throw new HttpError(400, "El estado del precio dinámico es inválido.");
+  const floorClpPerLaneHour =
+    input.floorClpPerLaneHour === undefined
+      ? (previous.floorClpPerLaneHour ?? null)
+      : input.floorClpPerLaneHour;
+  if (
+    floorClpPerLaneHour != null &&
+    (!Number.isSafeInteger(floorClpPerLaneHour) || floorClpPerLaneHour <= 0)
+  )
+    throw new HttpError(400, "El piso debe ser un CLP entero positivo o quedar sin configurar.");
+  const maxDiscountPercent =
+    input.maxDiscountPercent === undefined
+      ? (previous.maxDiscountPercent ?? 30)
+      : input.maxDiscountPercent;
+  if (!Number.isInteger(maxDiscountPercent) || maxDiscountPercent < 1 || maxDiscountPercent > 100)
+    throw new HttpError(400, "El descuento máximo debe ser un entero entre 1 y 100%.");
+  const maxDiscountClpPerLaneHour =
+    input.maxDiscountClpPerLaneHour === undefined
+      ? (previous.maxDiscountClpPerLaneHour ?? null)
+      : input.maxDiscountClpPerLaneHour;
+  if (
+    maxDiscountClpPerLaneHour != null &&
+    (!Number.isSafeInteger(maxDiscountClpPerLaneHour) || maxDiscountClpPerLaneHour <= 0)
+  )
+    throw new HttpError(400, "El tope absoluto debe ser un CLP entero positivo o quedar vacío.");
+  const advanceWindowHours =
+    input.advanceWindowHours === undefined
+      ? (previous.advanceWindowHours ?? 48)
+      : input.advanceWindowHours;
+  if (!Number.isInteger(advanceWindowHours) || advanceWindowHours < 1 || advanceWindowHours > 720)
+    throw new HttpError(400, "La ventana de anticipación debe estar entre 1 y 720 horas.");
+  const lowOccupancyThresholdPercent =
+    input.lowOccupancyThresholdPercent === undefined
+      ? (previous.lowOccupancyThresholdPercent ?? 50)
+      : input.lowOccupancyThresholdPercent;
+  const mediumOccupancyThresholdPercent =
+    input.mediumOccupancyThresholdPercent === undefined
+      ? (previous.mediumOccupancyThresholdPercent ?? 70)
+      : input.mediumOccupancyThresholdPercent;
+  if (
+    !Number.isInteger(lowOccupancyThresholdPercent) ||
+    !Number.isInteger(mediumOccupancyThresholdPercent) ||
+    lowOccupancyThresholdPercent < 0 ||
+    mediumOccupancyThresholdPercent > 100 ||
+    lowOccupancyThresholdPercent >= mediumOccupancyThresholdPercent
+  )
+    throw new HttpError(
+      400,
+      "Los umbrales de ocupación deben ser enteros entre 0 y 100, con el bajo menor que el medio.",
+    );
+  const riskTiersInput =
+    input.riskTiers === undefined ? (previous.riskTiers ?? []) : input.riskTiers;
+  if (!Array.isArray(riskTiersInput) || riskTiersInput.length > 20)
+    throw new HttpError(400, "Los niveles de riesgo deben ser una lista válida.");
+  const riskTiers = riskTiersInput
+    .map((tier) => {
+      if (
+        !isRecord(tier) ||
+        !Number.isInteger(tier.minPoints) ||
+        tier.minPoints < 1 ||
+        tier.minPoints > 100 ||
+        !Number.isInteger(tier.discountPercent) ||
+        tier.discountPercent < 1 ||
+        tier.discountPercent > maxDiscountPercent
+      )
+        throw new HttpError(
+          400,
+          "Cada nivel de riesgo necesita puntaje mínimo positivo y descuento no mayor al máximo.",
+        );
+      return { minPoints: tier.minPoints, discountPercent: tier.discountPercent };
+    })
+    .sort((a, b) => a.minPoints - b.minPoints);
+  if (new Set(riskTiers.map((tier) => tier.minPoints)).size !== riskTiers.length)
+    throw new HttpError(400, "No puede haber dos niveles con el mismo puntaje mínimo.");
+  const protectedWeekdays = validateWeekdays(
+    input.protectedWeekdays === undefined
+      ? (previous.protectedWeekdays ?? [])
+      : input.protectedWeekdays,
+    "Los días protegidos",
+  );
+  const protectedBands = validateDynamicBands(
+    input.protectedBands === undefined ? (previous.protectedBands ?? []) : input.protectedBands,
+    "Las franjas protegidas",
+  );
+  const protectedDates = validateProtectedDates(
+    input.protectedDates === undefined ? (previous.protectedDates ?? []) : input.protectedDates,
+  );
+  const dailyDiscountBudgetClp =
+    input.dailyDiscountBudgetClp === undefined
+      ? (previous.dailyDiscountBudgetClp ?? null)
+      : input.dailyDiscountBudgetClp;
+  if (
+    dailyDiscountBudgetClp != null &&
+    (!Number.isSafeInteger(dailyDiscountBudgetClp) || dailyDiscountBudgetClp <= 0)
+  )
+    throw new HttpError(
+      400,
+      "El presupuesto diario debe ser un CLP entero positivo o quedar vacío.",
+    );
+  const quoteTtlMinutes =
+    input.quoteTtlMinutes === undefined ? (previous.quoteTtlMinutes ?? 20) : input.quoteTtlMinutes;
+  if (!Number.isInteger(quoteTtlMinutes) || quoteTtlMinutes < 5 || quoteTtlMinutes > 60)
+    throw new HttpError(400, "La vigencia de la cotización debe estar entre 5 y 60 minutos.");
+  const channelsInput =
+    input.channels === undefined ? (previous.channels ?? ["web"]) : input.channels;
+  if (!Array.isArray(channelsInput) || channelsInput.length > dynamicPricingChannels.length)
+    throw new HttpError(400, "Los canales del precio dinámico son inválidos.");
+  const channels = [...new Set(channelsInput)];
+  if (
+    channels.length !== channelsInput.length ||
+    channels.some((channel) => !dynamicPricingChannels.includes(channel))
+  )
+    throw new HttpError(400, "Los canales del precio dinámico son inválidos o están repetidos.");
+  const pilotInput = input.pilot ?? previous.pilot ?? {};
+  const pilotWeekdays = validateWeekdays(
+    pilotInput.weekdays === undefined ? (previous.pilot?.weekdays ?? []) : pilotInput.weekdays,
+    "Los días del piloto",
+  );
+  const pilotBands = validateDynamicBands(
+    pilotInput.bands === undefined ? (previous.pilot?.bands ?? []) : pilotInput.bands,
+    "Las franjas del piloto",
+  );
+  if (mode !== "off") {
+    if (!Number.isSafeInteger(generalRateClpPerLaneHour) || generalRateClpPerLaneHour <= 0)
+      throw new HttpError(400, "Configura una tarifa de lista mayor que cero antes de activar.");
+    if (floorClpPerLaneHour == null)
+      throw new HttpError(400, "El piso por pista/hora es obligatorio para este estado.");
+    if (floorClpPerLaneHour > generalRateClpPerLaneHour)
+      throw new HttpError(400, "El piso no puede superar la tarifa de lista.");
+    if (!riskTiers.length)
+      throw new HttpError(400, "Define al menos un nivel de riesgo antes de activar.");
+    if (!channels.length)
+      throw new HttpError(400, "Selecciona al menos un canal para el precio dinámico.");
+  }
+  if ((mode === "pilot" || mode === "active") && dailyDiscountBudgetClp == null)
+    throw new HttpError(400, "El piloto y el modo activo requieren presupuesto diario.");
+  if (mode === "pilot" && !pilotWeekdays.length && !pilotBands.length)
+    throw new HttpError(400, "El piloto necesita al menos un día o una franja.");
+  return {
+    mode,
+    configVersion: Number(previous.configVersion ?? 1),
+    floorClpPerLaneHour,
+    maxDiscountPercent,
+    maxDiscountClpPerLaneHour,
+    advanceWindowHours,
+    lowOccupancyThresholdPercent,
+    mediumOccupancyThresholdPercent,
+    riskTiers,
+    protectedWeekdays,
+    protectedBands,
+    protectedDates,
+    dailyDiscountBudgetClp,
+    quoteTtlMinutes,
+    channels,
+    pilot: { weekdays: pilotWeekdays, bands: pilotBands },
+  };
+}
 function preservationScoreGreater(a, b) {
   if (!b) return true;
   for (let i = 0; i < Math.min(a.length, b.length); i += 1) if (a[i] !== b[i]) return a[i] > b[i];
@@ -630,6 +1087,18 @@ function publicReservationDetail(row) {
       discountClp: quote.discountClp,
       totalClp: row.quote_clp,
       promotionName: quote.promotionName,
+      pricingSource:
+        quote.pricingSource ??
+        (quote.promotionName ? "promotion" : quote.dynamic?.applied ? "dynamic" : "catalog"),
+      dynamic: quote.dynamic
+        ? {
+            applied: quote.dynamic.applied === true,
+            reason: quote.dynamic.reason ?? null,
+            discountClp: quote.dynamic.discountClp ?? 0,
+            riskPoints: quote.dynamic.riskPoints ?? null,
+            configVersion: quote.dynamic.configVersion ?? null,
+          }
+        : null,
     },
     terms:
       "La tarifa corresponde a las pistas y al tiempo contratados. Los pagos se verifican presencialmente.",
@@ -657,6 +1126,7 @@ async function handleApi(req, res, url) {
       extensionDurations: extensionDurationsFor(settings.startIntervalMinutes),
       rateConfigured: settings.generalRateClpPerLaneHour > 0,
       demoPrice: settings.demoMode,
+      quoteHoldMinutes: quoteTtlMinutesFor(settings),
       emailDeliveryConfigured: Boolean(
         process.env.MAIL_DELIVERY_URL && process.env.MAIL_DELIVERY_TOKEN,
       ),
@@ -678,6 +1148,8 @@ async function handleApi(req, res, url) {
       throw new HttpError(400, error.message);
     }
     const { start, end } = parseLocalDay(date);
+    const settings = getSettings();
+    const now = Date.now();
     const found = findAlternatives({
       date,
       preferredTime: time,
@@ -686,34 +1158,48 @@ async function handleApi(req, res, url) {
       acceptSeparated,
       reservations: reservationsForRange(start, end + 2 * 3_600_000),
       blocks: blocksForRange(start, end + 2 * 3_600_000),
-      settings: getSettings(),
+      settings,
       limit: 10,
+      now,
+      budgetRemainingClp: budgetRemainingForDate(date, settings),
     });
     const bestScore = found.reduce(
       (best, option) =>
         preservationScoreGreater(option.preservationScore, best) ? option.preservationScore : best,
       null,
     );
-    const alternatives = found.map((option) => ({
-      startAt: `${date}T${formatLocalTime(option.startMs)}`,
-      startMs: option.startMs,
-      endMs: option.endMs,
-      startTime: formatLocalTime(option.startMs),
-      endTime: formatLocalTime(option.endMs),
-      utcOffset: localUtcOffset(option.startMs),
-      durationMinutes,
-      laneCount: option.laneCount,
-      minimumLanes: option.minimumLanes,
-      grouped: option.grouped,
-      quote: option.quote,
-      distanceMinutes: option.distanceMinutes,
-      rank: option.rank,
-      recommended: option.preservationScore.join(",") === bestScore?.join(","),
-    }));
+    const alternatives = found.map((option) => {
+      const lock = quoteLockForOption({
+        option,
+        players,
+        durationMinutes,
+        settings,
+        now,
+      });
+      return {
+        startAt: `${date}T${formatLocalTime(option.startMs)}`,
+        startMs: option.startMs,
+        endMs: option.endMs,
+        startTime: formatLocalTime(option.startMs),
+        endTime: formatLocalTime(option.endMs),
+        utcOffset: localUtcOffset(option.startMs),
+        durationMinutes,
+        laneCount: option.laneCount,
+        minimumLanes: option.minimumLanes,
+        grouped: option.grouped,
+        quote: publicQuote(option.quote),
+        quoteToken: lock.quoteToken,
+        quoteExpiresAt: lock.quoteExpiresAt,
+        distanceMinutes: option.distanceMinutes,
+        rank: option.rank,
+        priceOpportunity: option.priceOpportunity === true,
+        recommended: option.preservationScore.join(",") === bestScore?.join(","),
+      };
+    });
     return json(res, 200, {
       alternatives,
       date,
-      preparationMinutes: getSettings().preparationMinutes,
+      preparationMinutes: settings.preparationMinutes,
       timezone: "America/Santiago",
     });
   }
@@ -804,9 +1290,12 @@ async function handleApi(req, res, url) {
     const proofToken = requireText(body.emailProof, "Verificación de correo", 200);
     const idem = body.idempotencyKey;
     const now = Date.now();
-    const candidate = getCandidate(body.startAt, body, "web");
     if (body.acceptTerms !== true)
       throw new HttpError(400, "Acepta las condiciones de la solicitud para continuar.");
+    const lockedQuote = body.quoteToken ? verifyQuoteToken(body.quoteToken) : null;
+    const candidate = lockedQuote
+      ? candidateFromQuoteToken(body, lockedQuote)
+      : getCandidate(body.startAt, body, "web");
     const request = transaction((conn) => {
       const duplicate = conn
         .prepare(
@@ -844,7 +1333,14 @@ async function handleApi(req, res, url) {
       const manageExpiresAt = now + manageHours * 3_600_000;
       const approvalNeeded = candidate.laneCount >= currentSettings.requireManualApprovalFromLanes;
       const status = approvalNeeded ? "pending_approval" : "confirmed";
-      const quoteJson = { ...candidate.quote, demo: currentSettings.demoMode };
+      const quoteJson = {
+        ...candidate.quote,
+        demo: currentSettings.demoMode,
+        acceptedAt: now,
+        quoteTokenExpiresAt: candidate.expiresAt ?? null,
+        pricingConfigVersion:
+          candidate.configVersion ?? candidate.quote.dynamic?.configVersion ?? null,
+      };
       const code = `B-${randomBytes(4).toString("hex").toUpperCase()}`;
       conn
         .prepare(`INSERT INTO booking_requests(id,idempotency_key,email,customer_name,channel,status,reservation_id,original_quote_clp,current_quote_clp,created_at,updated_at)
@@ -874,7 +1370,7 @@ async function handleApi(req, res, url) {
           "web",
           candidate.startMs,
           candidate.endMs,
-          Number(body.players),
+          candidate.players ?? Number(body.players),
           candidate.laneCount,
           candidate.grouped ? "together" : "separated_accepted",
           status,
@@ -890,6 +1386,21 @@ async function handleApi(req, res, url) {
           "client-web",
         );
       allocateReservation(conn, reservationId, candidate);
+      recordPricingDecision(conn, {
+        quote: candidate.quote,
+        candidate,
+        channel: "web",
+        reservationId,
+        offeredAt: candidate.offeredAt ?? now,
+        expiresAt: candidate.expiresAt ?? null,
+        acceptedAt: now,
+        configSnapshot: candidate.configSnapshot ?? pricingConfigSnapshot(currentSettings),
+        configVersion:
+          candidate.configVersion ??
+          candidate.quote.dynamic?.configVersion ??
+          currentSettings.dynamicPricing?.configVersion ??
+          0,
+      });
       conn
         .prepare("UPDATE email_proofs SET consumed_at=? WHERE token_hash=?")
         .run(now, digest(proofToken));
@@ -899,6 +1410,11 @@ async function handleApi(req, res, url) {
         status,
         channel: "web",
         address,
+        pricingSource: candidate.quote.pricingSource ?? "catalog",
+        dynamicDiscountClp: candidate.quote.dynamic?.discountClp ?? 0,
+        quoteLocked: Boolean(lockedQuote),
+        pricingConfigVersion:
+          candidate.configVersion ?? candidate.quote.dynamic?.configVersion ?? null,
       });
       const manageLink = `${baseUrl()}/seguimiento?token=${encodeURIComponent(manageToken)}`;
       const mailId = queueMail(conn, {
@@ -929,7 +1445,7 @@ async function handleApi(req, res, url) {
       status: request.status,
       statusLabel: statusView(request.status),
       booking: request.booking,
-      quote: request.quote,
+      quote: publicQuote(request.quote),
       notificationPending: !emailDelivered,
       manageLink: demoMode ? manageLink : undefined,
     });
@@ -1339,23 +1855,44 @@ async function handleApi(req, res, url) {
           channel,
           candidate.startMs,
           candidate.endMs,
-          Number(body.players),
+          candidate.players ?? Number(body.players),
           candidate.laneCount,
           candidate.grouped ? "together" : "separated_accepted",
           "confirmed",
           "assigned",
           "unpaid",
           candidate.quote.totalClp,
-          JSON.stringify({ ...candidate.quote, demo: getSettings().demoMode }),
+          JSON.stringify({
+            ...candidate.quote,
+            demo: getSettings().demoMode,
+            acceptedAt: now,
+            pricingConfigVersion: candidate.quote.dynamic?.configVersion ?? null,
+          }),
           now,
           now,
           now,
           actor.id,
         );
       allocateReservation(conn, id, candidate);
+      recordPricingDecision(conn, {
+        quote: candidate.quote,
+        candidate,
+        channel,
+        reservationId: id,
+        offeredAt: now,
+        acceptedAt: now,
+        configSnapshot: pricingConfigSnapshot(getSettings()),
+        configVersion:
+          candidate.quote.dynamic?.configVersion ??
+          getSettings().dynamicPricing?.configVersion ??
+          0,
+      });
       addAudit(actor, "manual_booking_created", "reservation", id, {
         channel,
         laneCount: candidate.laneCount,
+        pricingSource: candidate.quote.pricingSource ?? "catalog",
+        dynamicDiscountClp: candidate.quote.dynamic?.discountClp ?? 0,
+        pricingConfigVersion: candidate.quote.dynamic?.configVersion ?? null,
       });
       return { reservation: getReservation(id), reused: false };
     });
@@ -1470,6 +2007,8 @@ async function handleApi(req, res, url) {
           blocks,
           settings,
           channel: current.channel,
+          now,
+          budgetRemainingClp: budgetRemainingForDate(targetDate, settings),
         });
         if (!candidate)
           throw new HttpError(409, "Ese bloque no está disponible para mover esta reserva.");
@@ -1490,12 +2029,28 @@ async function handleApi(req, res, url) {
           };
         conn.prepare("UPDATE allocations SET active=0 WHERE reservation_id=? AND active=1").run(id);
         allocateReservation(conn, id, candidate);
-        const quoteJson = { ...candidate.quote, demo: settings.demoMode };
+        const quoteJson = {
+          ...candidate.quote,
+          demo: settings.demoMode,
+          acceptedAt: now,
+          pricingConfigVersion: candidate.quote.dynamic?.configVersion ?? null,
+        };
         conn
           .prepare(
             "UPDATE reservations SET start_ms=?,end_ms=?,quote_clp=?,quote_json=?,manual_lane_lock=1,updated_at=? WHERE id=?",
           )
           .run(startMs, endMs, candidate.quote.totalClp, JSON.stringify(quoteJson), now, id);
+        recordPricingDecision(conn, {
+          quote: candidate.quote,
+          candidate,
+          channel: current.channel,
+          reservationId: id,
+          offeredAt: now,
+          acceptedAt: now,
+          configSnapshot: pricingConfigSnapshot(settings),
+          configVersion:
+            candidate.quote.dynamic?.configVersion ?? settings.dynamicPricing?.configVersion ?? 0,
+        });
         if (reservation.request_id)
           conn
             .prepare(
@@ -1508,6 +2063,9 @@ async function handleApi(req, res, url) {
           quoteClp: candidate.quote.totalClp,
           customerAcceptedNewPrice: body.acceptedQuoteClp != null,
           manualLaneLock: true,
+          pricingSource: candidate.quote.pricingSource ?? "catalog",
+          dynamicDiscountClp: candidate.quote.dynamic?.discountClp ?? 0,
+          pricingConfigVersion: candidate.quote.dynamic?.configVersion ?? null,
         });
         const saved = reservationPublic(getReservation(id));
         const actionResult = { booking: saved };
@@ -1925,6 +2483,8 @@ async function handleApi(req, res, url) {
         blocks: blocksForRange(reservation.start_ms, reservation.end_ms + 2 * 3_600_000),
         settings,
         channel: request.channel,
+        now,
+        budgetRemainingClp: budgetRemainingForDate(formatLocalDate(reservation.start_ms), settings),
       });
       if (!candidate)
         throw new HttpError(
@@ -2047,6 +2607,121 @@ async function handleApi(req, res, url) {
     });
     return json(res, 200, { ok: true });
   }
+  if (method === "POST" && path === "/api/staff/pricing/preview") {
+    requireActor(req, ["admin"]);
+    const body = await readBody(req);
+    let startMs;
+    try {
+      const localInput = requireText(body.startAt, "Fecha y hora", 16);
+      startMs = localDateTimeToEpoch(localInput);
+      if (`${formatLocalDate(startMs)}T${formatLocalTime(startMs)}` !== localInput)
+        throw new Error("La hora elegida no coincide con la hora de Santiago.");
+    } catch (error) {
+      throw new HttpError(400, error.message);
+    }
+    const players = Number(body.players);
+    if (!Number.isSafeInteger(players) || players < 1 || players > 72)
+      throw new HttpError(400, "Indica entre 1 y 72 jugadores.");
+    const durationMinutes = Number(body.durationMinutes);
+    if (!isWholeHourBookingDuration(durationMinutes))
+      throw new HttpError(400, "La simulación usa horas completas.");
+    const laneCount =
+      body.laneCount == null || body.laneCount === ""
+        ? minimumLanes(players)
+        : Number(body.laneCount);
+    if (!Number.isInteger(laneCount) || laneCount < minimumLanes(players) || laneCount > 12)
+      throw new HttpError(400, "La cantidad de pistas no cubre el grupo.");
+    if (startMs < Date.now())
+      throw new HttpError(400, "La simulación debe usar un horario futuro.");
+    const date = formatLocalDate(startMs);
+    if (!dateLimitOk(date))
+      throw new HttpError(400, "Elige una fecha dentro de los próximos 60 días.");
+    const settings = getSettings();
+    if (!alignedToScheduleStep(startMs, settings.startIntervalMinutes))
+      throw new HttpError(
+        400,
+        `El inicio debe respetar bloques de ${settings.startIntervalMinutes} minutos.`,
+      );
+    if (body.dynamicPricing != null && !isRecord(body.dynamicPricing))
+      throw new HttpError(400, "La configuración de precio dinámico es inválida.");
+    const requestedDynamicPricing = body.dynamicPricing
+      ? {
+          ...settings.dynamicPricing,
+          ...body.dynamicPricing,
+          pilot: {
+            ...settings.dynamicPricing?.pilot,
+            ...(isRecord(body.dynamicPricing.pilot) ? body.dynamicPricing.pilot : {}),
+          },
+        }
+      : (settings.dynamicPricing ?? {});
+    const normalizedDynamicPricing = validateDynamicPricing(requestedDynamicPricing, {
+      previous: settings.dynamicPricing ?? {},
+      generalRateClpPerLaneHour: settings.generalRateClpPerLaneHour,
+    });
+    const previewSettings = {
+      ...settings,
+      dynamicPricing: {
+        ...normalizedDynamicPricing,
+        configVersion: Number(settings.dynamicPricing?.configVersion ?? 1),
+        mode: normalizedDynamicPricing.mode === "off" ? "shadow" : normalizedDynamicPricing.mode,
+      },
+    };
+    const { start, end } = parseLocalDay(date);
+    const now = Date.now();
+    const candidate = selectLaneSetAtTime({
+      startMs,
+      players,
+      durationMinutes,
+      lanes: laneCount,
+      acceptSeparated: body.acceptSeparated === true,
+      reservations: reservationsForRange(start, end + 2 * 3_600_000),
+      blocks: blocksForRange(start, end + 2 * 3_600_000),
+      settings: previewSettings,
+      channel: ["web", "phone", "walk_in", "counter_future"].includes(body.channel)
+        ? body.channel
+        : "web",
+      now,
+      budgetRemainingClp: budgetRemainingForDate(date, previewSettings),
+    });
+    if (!candidate)
+      return json(res, 200, {
+        available: false,
+        previewOnly: true,
+        date,
+        message: "No hay una agrupación libre para ese horario y grupo.",
+      });
+    return json(res, 200, {
+      available: true,
+      previewOnly: true,
+      startAt: `${date}T${formatLocalTime(candidate.startMs)}`,
+      startMs: candidate.startMs,
+      endMs: candidate.endMs,
+      date,
+      players,
+      durationMinutes,
+      laneCount: candidate.laneCount,
+      lanes: candidate.lanes,
+      grouped: candidate.grouped,
+      quote: publicQuote(candidate.quote),
+      preview: candidate.quote.dynamic
+        ? {
+            eligible: candidate.quote.dynamic.eligible,
+            applied: candidate.quote.dynamic.applied,
+            shadow: candidate.quote.dynamic.shadow,
+            potentialDiscountClp: candidate.quote.dynamic.potentialDiscountClp,
+            totalAfterDiscountClp: candidate.quote.dynamic.totalAfterDiscountClp,
+            discountPercent: candidate.quote.dynamic.discountPercent,
+            riskPoints: candidate.quote.dynamic.riskPoints,
+            reason: candidate.quote.dynamic.reason,
+            reasonCode: candidate.quote.dynamic.reasonCode,
+            signals: candidate.quote.dynamic.signals,
+            tier: candidate.quote.dynamic.tier,
+            configVersion: candidate.quote.dynamic.configVersion,
+          }
+        : null,
+      configVersion: previewSettings.dynamicPricing.configVersion,
+    });
+  }
   if (method === "GET" && path === "/api/staff/settings") {
     requireActor(req, ["admin"]);
     const settings = getSettings();
@@ -2080,6 +2755,7 @@ async function handleApi(req, res, url) {
       "rateBands",
       "rateExceptions",
       "promotions",
+      "dynamicPricing",
       "cancellationFreeHours",
       "lateCancellationPenaltyClp",
       "requireManualApprovalFromLanes",
@@ -2157,6 +2833,29 @@ async function handleApi(req, res, url) {
     validateHours(updated.weeklyHours, updated.exceptions);
     validateRates(updated);
     validatePromotions(updated.promotions);
+    if (Object.hasOwn(body, "dynamicPricing") && !isRecord(body.dynamicPricing))
+      throw new HttpError(400, "La configuración de precio dinámico es inválida.");
+    const requestedDynamicPricing = Object.hasOwn(body, "dynamicPricing")
+      ? {
+          ...old.dynamicPricing,
+          ...body.dynamicPricing,
+          pilot: {
+            ...old.dynamicPricing?.pilot,
+            ...(isRecord(body.dynamicPricing.pilot) ? body.dynamicPricing.pilot : {}),
+          },
+        }
+      : (updated.dynamicPricing ?? {});
+    const normalizedDynamicPricing = validateDynamicPricing(requestedDynamicPricing, {
+      previous: old.dynamicPricing ?? {},
+      generalRateClpPerLaneHour: updated.generalRateClpPerLaneHour,
+    });
+    const previousConfigVersion = Number(old.dynamicPricing?.configVersion ?? 0);
+    updated.dynamicPricing = {
+      ...normalizedDynamicPricing,
+      configVersion: Object.hasOwn(body, "dynamicPricing")
+        ? previousConfigVersion + 1
+        : previousConfigVersion || 1,
+    };
     transaction((conn) => {
       if (old.preparationMinutes !== updated.preparationMinutes) {
         const allocations = conn
@@ -2194,6 +2893,10 @@ async function handleApi(req, res, url) {
         changed: Object.keys(body),
         preparationMinutes: updated.preparationMinutes,
         rateChanged: old.generalRateClpPerLaneHour !== updated.generalRateClpPerLaneHour,
+        dynamicPricingChanged: Object.hasOwn(body, "dynamicPricing"),
+        dynamicPricingConfigVersion: updated.dynamicPricing.configVersion,
+        previousDynamicPricingConfigVersion: previousConfigVersion,
+        dynamicPricingMode: updated.dynamicPricing.mode,
       });
     });
     return json(res, 200, { settings: updated });
@@ -2342,6 +3045,7 @@ const server = createServer(async (req, res) => {
         status === 500
           ? "Ocurrió un error interno. El equipo puede revisar la auditoría del servicio."
           : error.message,
+      ...(error instanceof HttpError && error.code ? { code: error.code } : {}),
     });
   }
 });
