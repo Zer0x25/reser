@@ -892,6 +892,41 @@ test("dynamic pricing requires explicit configuration and honors the locked quot
   assert.equal(createdData.quote.totalClp, 9600);
   assert.equal(createdData.quote.pricingSource, "dynamic");
 
+  const promotion = {
+    name: "Promoción de prueba",
+    enabled: true,
+    kind: "percent",
+    value: 25,
+    startsAt: Date.now() - 60_000,
+    endsAt: Date.now() + 48 * 60 * 60_000,
+    channel: "web",
+  };
+  const promotionConfigured = await fetch(`${base}/api/staff/settings`, {
+    method: "PUT",
+    headers: { cookie: adminCookie, origin: base, "content-type": "application/json" },
+    body: JSON.stringify({ promotions: [promotion] }),
+  });
+  assert.equal(promotionConfigured.status, 200);
+  const promotionalAvailability = await fetch(
+    `${base}/api/availability?date=${date}&time=${encodeURIComponent(time)}&players=4&duration=60`,
+  );
+  assert.equal(promotionalAvailability.status, 200);
+  const promotionalOption = (await promotionalAvailability.json()).alternatives.find(
+    (candidate) => candidate.startTime === time,
+  );
+  assert.ok(promotionalOption, "the preferred time should remain available on another lane");
+  assert.equal(promotionalOption.quote.pricingSource, "promotion");
+  assert.equal(promotionalOption.quote.discountClp, 5000);
+  assert.equal(promotionalOption.quote.totalClp, 15000);
+  assert.deepEqual(promotionalOption.quote.dynamic, {
+    applied: false,
+    discountClp: 0,
+    potentialDiscountClp: 3000,
+    totalAfterDiscountClp: 17000,
+  });
+  assert.equal("signals" in promotionalOption.quote.dynamic, false);
+  assert.equal("riskPoints" in promotionalOption.quote.dynamic, false);
+
   const tamperedToken = `${option.quoteToken.slice(0, -1)}${option.quoteToken.endsWith("a") ? "b" : "a"}`;
   const tampered = await fetch(`${base}/api/requests`, {
     method: "POST",
