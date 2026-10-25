@@ -16,6 +16,7 @@
     "smoke": "vp run website#smoke",
     "smoke:preview": "vp run website#smoke:preview",
     "simulate:engine": "vp run website#simulate:engine",
+    "simulate:pricing": "vp run website#simulate:pricing",
     "dev": "vp run website#dev",
     "prepare": "vp config"
   },

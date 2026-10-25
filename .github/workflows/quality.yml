@@ -22,4 +22,5 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter website exec playwright install --with-deps chromium
+      - run: sudo apt-get install -y locales && sudo locale-gen es_ES.UTF-8
       - run: pnpm exec vp run regression

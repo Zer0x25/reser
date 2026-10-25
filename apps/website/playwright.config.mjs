@@ -38,6 +38,11 @@ export default defineConfig({
           ? "/usr/bin/chromium"
           : undefined,
       args: ["--no-sandbox"],
+      env: {
+        ...process.env,
+        LANG: "es_ES.UTF-8",
+        LC_ALL: "es_ES.UTF-8",
+      },
     },
     trace: "retain-on-failure",
     screenshot: "only-on-failure",

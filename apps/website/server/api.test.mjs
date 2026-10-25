@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -779,6 +780,22 @@ test("dynamic pricing requires explicit configuration and honors the locked quot
     { minPoints: 3, discountPercent: 20 },
   ]);
 
+  const invalidConfiguration = await fetch(`${base}/api/staff/settings`, {
+    method: "PUT",
+    headers: { cookie: adminCookie, origin: base, "content-type": "application/json" },
+    body: JSON.stringify({
+      dynamicPricing: { ...dynamicPricing, maxDiscountPercent: 101 },
+    }),
+  });
+  assert.equal(invalidConfiguration.status, 400);
+  const settingsAfterRejection = await fetch(`${base}/api/staff/settings`, {
+    headers: { cookie: adminCookie },
+  });
+  assert.equal(settingsAfterRejection.status, 200);
+  const persistedAfterRejection = await settingsAfterRejection.json();
+  assert.equal(persistedAfterRejection.dynamicPricing.configVersion, 2);
+  assert.equal(persistedAfterRejection.dynamicPricing.maxDiscountPercent, 30);
+
   const date = addLocalDays(formatLocalDate(Date.now()), 1);
   const time = "20:00";
   const preview = await fetch(`${base}/api/staff/pricing/preview`, {
@@ -880,6 +897,28 @@ test("dynamic pricing requires explicit configuration and honors the locked quot
     acceptTerms: true,
     quoteToken: option.quoteToken,
   };
+  const [quoteBody] = option.quoteToken.split(".");
+  const expiredPayload = JSON.parse(Buffer.from(quoteBody, "base64url").toString("utf8"));
+  expiredPayload.expiresAt = Date.now() - 1;
+  const expiredBody = Buffer.from(JSON.stringify(expiredPayload)).toString("base64url");
+  const expiredSignature = createHmac(
+    "sha256",
+    "dynamic-tests-stable-secret-with-at-least-32-bytes",
+  )
+    .update(`quote:${expiredBody}`)
+    .digest("base64url");
+  const expired = await fetch(`${base}/api/requests`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      ...requestBody,
+      idempotencyKey: "dynamic-expired-quote-request",
+      quoteToken: `${expiredBody}.${expiredSignature}`,
+    }),
+  });
+  assert.equal(expired.status, 409);
+  assert.equal((await expired.json()).code, "quote_expired");
+
   const created = await fetch(`${base}/api/requests`, {
     method: "POST",
     headers: { "content-type": "application/json" },
