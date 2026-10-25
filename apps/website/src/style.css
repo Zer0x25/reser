@@ -635,6 +635,10 @@ main {
   justify-items: end;
   gap: 3px;
 }
+.option-price .option-price-total {
+  max-width: 260px;
+  white-space: normal;
+}
 .option-price b {
   font: 700 16px var(--serif);
   color: #183c35;
@@ -642,6 +646,17 @@ main {
 .option-price small {
   margin-top: 0;
   font-size: 9px;
+  line-height: 1.4;
+}
+.option-price .price-discount,
+.option-price .price-saving,
+.total .price-discount,
+.total .price-saving {
+  color: #3d5a4c;
+}
+.option-price .price-potential,
+.total .price-potential {
+  color: #80663e;
 }
 .option-price .option-price-total b {
   color: var(--ox-burgundy);
@@ -686,6 +701,14 @@ main {
 .total {
   text-align: right;
   min-width: 120px;
+  max-width: 260px;
+}
+.total .price-base,
+.total .price-discount,
+.total .price-saving,
+.total .price-potential {
+  margin-top: 4px;
+  line-height: 1.4;
 }
 .total b {
   display: block;
@@ -1673,6 +1696,14 @@ footer b {
   .option-price {
     grid-column: 2;
     text-align: left;
+    justify-content: flex-start;
+    white-space: normal;
+  }
+  .option-price > div {
+    justify-items: start;
+  }
+  .option-price .option-price-total {
+    max-width: 220px;
   }
   .option-price b {
     font-size: 14px;
@@ -1691,6 +1722,10 @@ footer b {
   }
   .request-card {
     padding: 18px 13px;
+  }
+  .total {
+    max-width: 175px;
+    min-width: 0;
   }
   .request-card .panel-title h3 {
     font-size: 18px;
@@ -4479,7 +4514,7 @@ footer {
 }
 .pricing-preview-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
   margin: 12px 0;
 }
@@ -4492,6 +4527,9 @@ footer {
 .pricing-preview-grid b {
   color: #183c35;
   font: 700 17px var(--serif);
+}
+.pricing-preview-grid span {
+  min-width: 0;
 }
 .pricing-preview small {
   display: block;

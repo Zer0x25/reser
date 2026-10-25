@@ -146,9 +146,24 @@ function verifyQuoteToken(token) {
   return payload;
 }
 function publicQuote(quote) {
-  if (quote?.dynamic?.applied) return quote;
+  if (!quote) return quote;
   const safe = { ...quote };
+  const dynamic = quote.dynamic;
   delete safe.dynamic;
+  const mayShowDynamicPotential =
+    dynamic &&
+    ["active", "pilot"].includes(dynamic.mode) &&
+    quote.pricingSource === "promotion" &&
+    Number.isSafeInteger(dynamic.potentialDiscountClp) &&
+    dynamic.potentialDiscountClp > 0;
+  if (dynamic?.applied || mayShowDynamicPotential) {
+    safe.dynamic = {
+      applied: dynamic.applied === true,
+      discountClp: dynamic.applied ? dynamic.discountClp : 0,
+      potentialDiscountClp: dynamic.potentialDiscountClp,
+      totalAfterDiscountClp: dynamic.totalAfterDiscountClp,
+    };
+  }
   return safe;
 }
 function recordPricingDecision(

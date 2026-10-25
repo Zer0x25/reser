@@ -20,22 +20,9 @@ import {
 
 type DynamicQuote = {
   applied: boolean;
-  shadow?: boolean;
-  reason?: string | null;
-  reasonCode?: string | null;
   discountClp: number;
   potentialDiscountClp: number;
   totalAfterDiscountClp?: number;
-  discountPercent?: number;
-  riskPoints?: number | null;
-  configVersion?: number | null;
-  signals?: {
-    occupancyPercent?: number | null;
-    leadTimeHours?: number | null;
-    gapRisk?: boolean;
-    futureValueRisk?: boolean;
-    [key: string]: unknown;
-  };
 };
 type Option = {
   startAt: string;
@@ -158,6 +145,23 @@ function money(n: number) {
     currency: "CLP",
     maximumFractionDigits: 0,
   }).format(n);
+}
+function quotePriceBreakdown(quote: Option["quote"]) {
+  const discountLabel =
+    quote.pricingSource === "dynamic"
+      ? "Precio dinámico"
+      : quote.pricingSource === "promotion"
+        ? `Promoción${quote.promotionName ? ` · ${esc(quote.promotionName)}` : ""}`
+        : "Descuento";
+  const appliedDiscount =
+    quote.discountClp > 0
+      ? `<small class="price-discount">Descuento aplicado · ${discountLabel}: ${money(quote.discountClp)}</small><small class="price-saving">Ahorro ${money(quote.discountClp)}</small>`
+      : `<small class="price-discount">Sin descuento aplicado</small>`;
+  const dynamicPotential =
+    quote.dynamic && !quote.dynamic.applied && quote.dynamic.potentialDiscountClp > 0
+      ? `<small class="price-potential">Precio potencial dinámico (no aplicado): ${money(quote.dynamic.totalAfterDiscountClp ?? quote.baseClp - quote.dynamic.potentialDiscountClp)} · ahorro potencial ${money(quote.dynamic.potentialDiscountClp)}</small>`
+      : "";
+  return `<small class="price-base">Catálogo ${money(quote.baseClp)}</small>${appliedDiscount}${dynamicPotential}`;
 }
 function durationLabel(minutes: number) {
   const hours = Math.floor(minutes / 60);
@@ -359,14 +363,12 @@ function renderOptions() {
           ? "Una pista para tu grupo"
           : `${laneLabel} ${o.grouped ? "contiguas" : "separadas"} para tu grupo`;
       const priceConfigured = state.config?.rateConfigured || state.config?.demoMode;
-      const hasDiscount = o.quote.discountClp > 0 && o.quote.totalClp < o.quote.baseClp;
-      const benefit = o.quote.promotionName
-        ? `<small class="promo">${esc(o.quote.promotionName)} aplicado</small>`
-        : o.quote.dynamic?.applied
-          ? `<small class="promo dynamic">Precio especial · ${esc(o.quote.dynamic.reason ?? "Baja demanda")}</small>`
+      const benefit =
+        o.quote.discountClp > 0
+          ? `<small class="promo">${o.quote.pricingSource === "dynamic" ? "Precio dinámico aplicado" : esc(o.quote.promotionName ?? "Promoción aplicada")}</small>`
           : "";
       const priceDetails = priceConfigured
-        ? `<div><small>${o.laneCount === 1 ? "Por pista" : "Promedio por pista"}</small><b>${money(Math.round(o.quote.totalClp / o.laneCount))}</b></div><div class="option-price-total"><small>Total · ${laneLabel} · ${durationLabel(o.durationMinutes)}</small>${hasDiscount ? `<small class="price-base">Antes ${money(o.quote.baseClp)}</small>` : ""}<b>${money(o.quote.totalClp)}</b></div>`
+        ? `<div><small>${o.laneCount === 1 ? "Por pista" : "Promedio por pista"}</small><b>${money(Math.round(o.quote.totalClp / o.laneCount))}</b></div><div class="option-price-total"><small>Total · ${laneLabel} · ${durationLabel(o.durationMinutes)}</small>${quotePriceBreakdown(o.quote)}<b>${money(o.quote.totalClp)}</b></div>`
         : `<div class="option-price-total"><small>Total · ${laneLabel} · ${durationLabel(o.durationMinutes)}</small><b>Tarifa por configurar</b></div>`;
       return `<article class="option-card ${chosen ? "chosen" : ""}"><div class="option-time"><b>${esc(o.startTime)}</b><small>${esc(o.endTime)} término</small>${repeatedTimes.has(o.startTime) && o.utcOffset ? `<small>${esc(o.utcOffset)}</small>` : ""}</div><div class="option-info"><div><span class="tag ${o.recommended ? "green" : ""}">${o.recommended ? "Recomendado" : tag}</span><span class="tag">${durationLabel(o.durationMinutes)}</span>${o.quote.dynamic?.applied ? `<span class="tag green">Precio especial</span>` : ""}</div><p>${pisteDescription}</p>${benefit}</div><div class="option-price">${priceDetails}</div><button class="button ${chosen ? "chosen-button" : "outline"}" data-action="select" data-start="${o.startMs}">${chosen ? "Elegido ✓" : "Elegir"}</button></article>`;
     })
@@ -382,14 +384,12 @@ function renderRequestForm() {
     state.options.filter((option: Option) => option.startAt === o.startAt).length > 1
       ? ` · ${o.utcOffset}`
       : "";
-  const hasDiscount = o.quote.discountClp > 0 && o.quote.totalClp < o.quote.baseClp;
-  const benefit = o.quote.promotionName
-    ? `<small class="promo">${esc(o.quote.promotionName)} aplicado</small>`
-    : o.quote.dynamic?.applied
-      ? `<small class="promo dynamic">${esc(o.quote.dynamic.reason ?? "Precio especial por baja demanda")}</small>`
+  const benefit =
+    o.quote.discountClp > 0
+      ? `<small class="promo">${o.quote.pricingSource === "dynamic" ? "Precio dinámico aplicado" : esc(o.quote.promotionName ?? "Promoción aplicada")}</small>`
       : "";
   const total = priceConfigured
-    ? `${hasDiscount ? `<small class="price-base">Antes ${money(o.quote.baseClp)}</small>` : ""}<b>${money(o.quote.totalClp)}</b>`
+    ? `${quotePriceBreakdown(o.quote)}<b>${money(o.quote.totalClp)}</b>`
     : `<b>Por configurar</b>`;
   return `<section class="request-card"><button class="close" data-action="clear-selection" aria-label="Cerrar">×</button><div class="panel-title"><div><span class="eyebrow">TU OPCIÓN ELEGIDA</span><h3>${esc(o.startTime)}${esc(offset)} — ${esc(o.endTime)}</h3><p>${o.laneCount} ${o.laneCount === 1 ? "pista" : "pistas"} · ${state.duration / 60} h · ${state.players} jugadores</p></div><div class="total"><small>Total</small>${total}${benefit}<small>${state.config?.demoMode ? "precio ilustrativo" : "CLP"}</small></div></div><form id="request"><div class="two-fields"><label>Nombre del responsable<input name="name" autocomplete="name" required maxlength="120" value="${esc(state.requestName)}" placeholder="Tu nombre"></label><label>Correo electrónico<input name="email" type="email" autocomplete="email" required value="${esc(state.requestEmail || state.verifiedEmail)}" placeholder="nombre@correo.cl"></label></div><div class="verify-row"><span>✉ <b>Verifica tu correo</b><small>Enviamos un código de seis dígitos. Todavía no retenemos pistas.</small></span><button type="button" class="button outline" data-action="send-code">Enviar código</button></div><div class="code-row"><label>Código de verificación<input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" value="${esc(state.verificationCode)}" placeholder="000000" ${state.proof ? "disabled" : ""}></label><button type="button" class="button outline" data-action="verify" ${state.proof ? "disabled" : ""}>${state.proof ? "Correo verificado ✓" : "Verificar correo"}</button></div>${state.proof ? `<p class="verified">✓ Correo verificado para ${esc(state.verifiedEmail)}. Comprobaremos disponibilidad al enviar.</p>` : ""}${!priceConfigured ? `<p class="verified">Recepción debe configurar una tarifa antes de aceptar reservas.</p>` : ""}<p class="quote-lock">Precio válido hasta las ${esc(time(o.quoteExpiresAt))}. Las pistas se confirman al enviar la solicitud; si el horario se ocupa, te mostraremos alternativas.</p><label class="accept"><input name="terms" type="checkbox" ${state.requestTermsAccepted ? "checked" : ""} required><span>Acepto la tarifa, el horario y las condiciones. Un grupo grande puede requerir aprobación de recepción.</span></label><button class="button primary submit" ${state.proof && priceConfigured ? "" : "disabled"}>${o.laneCount >= 3 ? "Solicitar aprobación" : "Reservar este horario"} →</button><small class="privacy">🔒 Sin cuenta. El enlace de seguimiento solo da acceso a esta reserva.</small></form></section>`;
 }
