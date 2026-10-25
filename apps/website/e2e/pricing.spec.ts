@@ -117,6 +117,11 @@ function makeExpiredQuoteToken(token: string) {
 test("customer sees and books an eligible dynamic price", async ({ page, request }) => {
   const { headers, originalDynamicPricing } = await configureDynamicPricing(request);
   try {
+    const baselineResponse = await request.get("/api/staff/pricing/performance?days=30", {
+      headers,
+    });
+    expect(baselineResponse.ok()).toBe(true);
+    const baselineFunnel = (await baselineResponse.json()).funnel.totals;
     const option = await searchForDynamicPrice(page);
     await expect(option.locator(".option-price-total")).toContainText("$12.000");
     await expect(option.locator(".option-price-total")).toContainText("$9.600");
@@ -156,8 +161,12 @@ test("customer sees and books an eligible dynamic price", async ({ page, request
     await expect(funnel).toContainText("Cotización a solicitud");
     const funnelMetrics = funnel.locator(".pricing-funnel-metrics article");
     expect(Number(await funnelMetrics.nth(0).locator("b").textContent())).toBeGreaterThan(0);
-    await expect(funnelMetrics.nth(1).locator("b")).toHaveText("1");
-    await expect(funnelMetrics.nth(2).locator("b")).toHaveText("1");
+    expect(Number(await funnelMetrics.nth(1).locator("b").textContent())).toBeGreaterThanOrEqual(
+      baselineFunnel.selectedCount + 1,
+    );
+    expect(Number(await funnelMetrics.nth(2).locator("b").textContent())).toBeGreaterThanOrEqual(
+      baselineFunnel.reservedCount + 1,
+    );
     await performance.locator('[name="pricingPerformanceDays"]').selectOption("7");
     await expect(performance.locator('[name="pricingPerformanceDays"]')).toHaveValue("7");
     await expect(performance.locator(".pricing-performance-metrics article").nth(3)).toContainText(
