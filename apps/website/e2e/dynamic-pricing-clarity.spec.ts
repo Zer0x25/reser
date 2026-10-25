@@ -1,4 +1,4 @@
-import { expect, test, type APIRequestContext, type Page } from "./fixtures.js";
+import { appOrigin, expect, test, type APIRequestContext, type Page } from "./fixtures.js";
 
 const dynamicPricing = {
   mode: "active",
@@ -30,7 +30,7 @@ async function configurePricing(request: APIRequestContext) {
   expect(login.ok()).toBe(true);
   const headers = {
     cookie: login.headers()["set-cookie"].split(";")[0],
-    origin: "http://127.0.0.1:5173",
+    origin: appOrigin(),
   };
   const current = await request.get("/api/staff/settings", { headers });
   expect(current.ok()).toBe(true);

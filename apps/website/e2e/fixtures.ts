@@ -8,5 +8,11 @@ export const test = base.extend({
   },
 });
 
+export function appOrigin() {
+  const baseURL = test.info().project.use.baseURL;
+  if (typeof baseURL !== "string") throw new Error("Playwright baseURL is required for E2E tests.");
+  return new URL(baseURL).origin;
+}
+
 export { expect };
 export type { APIRequestContext, Page } from "@playwright/test";

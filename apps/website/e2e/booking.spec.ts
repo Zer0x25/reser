@@ -1,5 +1,5 @@
 import AxeBuilder from "@axe-core/playwright";
-import { expect, test, type APIRequestContext } from "./fixtures.js";
+import { appOrigin, expect, test, type APIRequestContext } from "./fixtures.js";
 
 const wcagTags = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22a", "wcag22aa"];
 
@@ -88,7 +88,7 @@ test("admin can close a weekday and configure overnight hours", async ({ page, r
   });
   expect(login.ok()).toBe(true);
   const cookie = login.headers()["set-cookie"].split(";")[0];
-  const authHeaders = { cookie, origin: "http://127.0.0.1:5173" };
+  const authHeaders = { cookie, origin: appOrigin() };
   const originalResponse = await request.get("/api/staff/settings", { headers: authHeaders });
   expect(originalResponse.ok()).toBe(true);
   const originalSettings = await originalResponse.json();
@@ -99,7 +99,7 @@ test("admin can close a weekday and configure overnight hours", async ({ page, r
       {
         name: "bowling_session",
         value: cookie.slice("bowling_session=".length),
-        url: "http://127.0.0.1:5173",
+        url: appOrigin(),
       },
     ]);
     await page.goto("/admin");
@@ -152,7 +152,7 @@ test("calendar drag selects whole-hour booking duration while start uses ten-min
     {
       name: "bowling_session",
       value: cookie.slice("bowling_session=".length),
-      url: "http://127.0.0.1:5173",
+      url: appOrigin(),
     },
   ]);
   await page.goto("/recepcion");
@@ -195,7 +195,7 @@ test("reception can move a booking with the mouse and protect its lane assignmen
   });
   expect(login.ok()).toBe(true);
   const cookie = login.headers()["set-cookie"].split(";")[0];
-  const authHeaders = { cookie, origin: "http://127.0.0.1:5173" };
+  const authHeaders = { cookie, origin: appOrigin() };
   const date = venueDate(32);
   const startMs = venueInstant(date, "17:00");
   const create = await request.post("/api/staff/bookings", {
@@ -220,7 +220,7 @@ test("reception can move a booking with the mouse and protect its lane assignmen
       {
         name: "bowling_session",
         value: cookie.slice("bowling_session=".length),
-        url: "http://127.0.0.1:5173",
+        url: appOrigin(),
       },
     ]);
     await page.goto("/recepcion");
@@ -376,7 +376,7 @@ test("customer accepts the revised price after reception rechecks a request", as
   expect(adminLogin.ok()).toBe(true);
   const adminHeaders = {
     cookie: adminLogin.headers()["set-cookie"].split(";")[0],
-    origin: "http://127.0.0.1:5173",
+    origin: appOrigin(),
   };
   const settingsResponse = await request.get("/api/staff/settings", { headers: adminHeaders });
   expect(settingsResponse.ok()).toBe(true);
@@ -431,7 +431,7 @@ test("customer renews an expired link and cancels the future reservation", async
   const created = await request.post("/api/staff/bookings", {
     headers: {
       cookie: receptionLogin.headers()["set-cookie"].split(";")[0],
-      origin: "http://127.0.0.1:5173",
+      origin: appOrigin(),
     },
     data: {
       idempotencyKey: `e2e-renew-cancel-${Date.now()}`,
@@ -476,17 +476,18 @@ test("reception can create a walk-in booking and check it in from the board", as
   page,
   request,
 }) => {
+  const origin = appOrigin();
   const adminLogin = await request.post("/api/auth/login", {
     data: { email: "admin@demo.local", password: "BowlingDemo2026!" },
   });
   expect(adminLogin.ok()).toBe(true);
   const adminCookie = adminLogin.headers()["set-cookie"].split(";")[0];
-  const authHeaders = { cookie: adminCookie, origin: "http://127.0.0.1:5173" };
+  const authHeaders = { cookie: adminCookie, origin };
   await page.context().addCookies([
     {
       name: "bowling_session",
       value: adminCookie.slice("bowling_session=".length),
-      url: "http://127.0.0.1:5173",
+      url: origin,
     },
   ]);
   await page.goto("/admin");
@@ -577,7 +578,7 @@ test("reception can create a walk-in booking and check it in from the board", as
     await expect(page.getByRole("heading", { name: "Tablero de pistas" })).toBeVisible();
 
     const created = await page.request.post("/api/staff/bookings", {
-      headers: { origin: "http://127.0.0.1:5173" },
+      headers: { origin },
       data: {
         idempotencyKey: `e2e-checkin-${Date.now()}`,
         channel: "walk_in",

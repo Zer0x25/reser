@@ -147,6 +147,9 @@ p {
   background: none;
   color: #345b50;
   font-weight: 700;
+  min-width: 24px;
+  min-height: 32px;
+  padding: 6px 8px;
 }
 .user-chip {
   display: flex;
@@ -3926,9 +3929,10 @@ footer {
 }
 .admin-stat {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 4px 12px;
+  min-width: 0;
   min-height: 78px;
   padding: 13px 16px;
   border: 1px solid #e5dfd5;
@@ -3948,6 +3952,7 @@ footer {
   box-shadow: 0 8px 20px #352a2012;
 }
 .admin-stat small {
+  min-width: 0;
   color: #6b6762;
   font-size: 11px;
 }
@@ -3960,9 +3965,11 @@ footer {
     sans-serif;
 }
 .admin-stat span {
+  min-width: 0;
   color: var(--ox-burgundy);
   font-size: 10px;
   font-weight: 700;
+  overflow-wrap: anywhere;
 }
 .admin-section[hidden] {
   display: none !important;
@@ -4191,7 +4198,7 @@ footer {
     font-size: 9px;
   }
   .admin-summary {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
   }
   .admin-stat {
