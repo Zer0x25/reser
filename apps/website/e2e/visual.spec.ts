@@ -83,6 +83,13 @@ test("@visual public booking screens match mobile visual baselines", async ({ pa
 
 test("@visual admin workspace keeps settings focused on desktop and mobile", async ({ page }) => {
   await page.goto("/admin");
+  await page.route("**/api/staff/settings", async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    const response = await route.fetch();
+    const settings = await response.json();
+    if (settings.dynamicPricing) settings.dynamicPricing.configVersion = 1;
+    await route.fulfill({ response, json: settings });
+  });
   await page.locator('#login [name="email"]').fill("admin@demo.local");
   await page.locator('#login [name="password"]').fill("BowlingDemo2026!");
   await page.getByRole("button", { name: "Ingresar →" }).click();
