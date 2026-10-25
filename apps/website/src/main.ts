@@ -1302,9 +1302,12 @@ app.addEventListener("click", async (event) => {
       const end = Number(target.dataset.axisEnd);
       const intervalMs = (state.config?.startIntervalMinutes ?? 10) * 60_000;
       const bounds = target.getBoundingClientRect();
+      const keyboardStart = state.board.operatingHours.isOpen
+        ? Math.ceil(state.board.operatingHours.startMs / intervalMs) * intervalMs
+        : start + (end - start) / 2;
       const fraction =
         event.detail === 0
-          ? 0.5
+          ? (keyboardStart - start) / (end - start)
           : Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width));
       const startMs = calendarStartAtFraction(start, end, intervalMs, fraction);
       openCalendarReservation(startMs, target.dataset.date!, 60);
