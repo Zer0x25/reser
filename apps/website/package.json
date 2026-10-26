@@ -7,7 +7,7 @@
     "dev": "node server/index.mjs & API_PID=$!; trap 'kill $API_PID 2>/dev/null || true' EXIT; vp dev --host 0.0.0.0",
     "api": "node server/index.mjs",
     "test": "vp run test:unit && vp run test:integration",
-    "test:unit": "node --test server/domain.test.mjs server/domain-property.test.mjs server/dynamic-pricing.test.mjs server/engine-simulation.test.mjs server/pricing-funnel.test.mjs server/pricing-performance.test.mjs shared/time.test.mjs && vp test run src/calendar.test.ts",
+    "test:unit": "node --test server/domain.test.mjs server/domain-property.test.mjs server/dynamic-pricing.test.mjs server/engine-simulation.test.mjs server/operational-config-history.test.mjs server/pricing-funnel.test.mjs server/pricing-performance.test.mjs shared/time.test.mjs && vp test run src/calendar.test.ts",
     "test:integration": "node --test server/api.test.mjs server/reoptimization.test.mjs",
     "coverage:domain": "node --experimental-test-coverage --test server/domain.test.mjs shared/time.test.mjs",
     "coverage:calendar": "vp test run --coverage --coverage.include=src/calendar.ts src/calendar.test.ts",

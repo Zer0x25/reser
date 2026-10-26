@@ -103,6 +103,8 @@ async function openAdmin(page: Page) {
             unbookableGapLaneHours: 42.5,
             unbookableGapPercent: 7.6,
             minimumSellableMinutes: 70,
+            configurationEstimated: true,
+            assignmentEstimated: true,
           },
         },
         totals: {
@@ -249,6 +251,8 @@ async function openDynamicPricingPanel(page: Page) {
   await expect(pricingPerformance).toContainText("$4.800");
   await expect(pricingPerformance).toContainText("Ocupación y fragmentación histórica");
   await expect(pricingPerformance).toContainText("55,7%");
+  await expect(pricingPerformance).toContainText("línea base estimada");
+  await expect(pricingPerformance).toContainText("asignaciones anteriores al registro");
   return pricingPerformance;
 }
 

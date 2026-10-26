@@ -133,11 +133,12 @@ test("reoptimization moves only flexible reservations, audits changes, and rolls
   const fixtureDb = new DatabaseSync(databasePath);
   fixtureDb.exec("PRAGMA busy_timeout = 5000");
   const assignLane = fixtureDb.prepare(
-    "UPDATE allocations SET lane_id=? WHERE reservation_id=? AND active=1",
+    "UPDATE allocations SET lane_id=?,changed_at=? WHERE reservation_id=? AND active=1",
   );
-  assignLane.run(11, flexibleBookings[0].id);
-  assignLane.run(12, flexibleBookings[1].id);
-  assignLane.run(10, lockedBooking.id);
+  const assignmentAt = Date.now();
+  assignLane.run(11, assignmentAt, flexibleBookings[0].id);
+  assignLane.run(12, assignmentAt, flexibleBookings[1].id);
+  assignLane.run(10, assignmentAt, lockedBooking.id);
   fixtureDb.prepare("UPDATE reservations SET manual_lane_lock=1 WHERE id=?").run(lockedBooking.id);
   fixtureDb.close();
 

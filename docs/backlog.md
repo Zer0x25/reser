@@ -25,4 +25,8 @@ Seguimiento de mejoras de flujo, interfaz y cobertura identificadas al revisar e
 - [x] **Calcular ingreso por pista-hora disponible.** Dividir los pagos verificados netos por reservas en el período entre las horas abiertas de pistas activas, descontando mantenciones registradas. El horario configurado actual se usa para períodos históricos y puede hacer la estimación imprecisa si hubo cambios.
 - [x] **Historial de ocupación y fragmentación.** El panel mide horas reservadas sobre horas disponibles, y la proporción de capacidad en huecos menores a una reserva mínima de una hora más preparación. Considera reservas con asignación vigente y descuenta mantenciones.
 
-Los horarios, pistas activas, preparación y mantenciones se reconstruyen con la configuración actual; si cambiaron durante el período, la estimación histórica puede diferir de la operación real. La ocupación no incluye el tiempo de preparación en las horas reservadas; la fragmentación sí considera el intervalo asignado completo.
+Los cambios de horario, pistas activas y preparación se guardan como versiones efectivas; las mantenciones conservan fecha de creación y liberación. Los períodos anteriores al inicio de este registro usan una línea base y aparecen marcados como estimados. La ocupación no incluye preparación en las horas reservadas; la fragmentación sí considera el intervalo asignado.
+
+## Precisión histórica
+
+- [x] **Versionar los cambios de asignación de pista.** Cada inserción, liberación y ajuste de una asignación conserva pista, horario y vigencia; los períodos anteriores a la migración usan una línea base estimada.

@@ -58,6 +58,30 @@ if (schemaVersion < 4) {
   );
   db.exec("PRAGMA user_version = 4");
 }
+if (schemaVersion < 5) {
+  db.exec(
+    readFileSync(
+      new URL("./migrations/005_operational_config_history.sql", import.meta.url),
+      "utf8",
+    ),
+  );
+  db.prepare("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(5,?,?)").run(
+    "operational config history",
+    now,
+  );
+  db.exec("PRAGMA user_version = 5");
+}
+if (schemaVersion < 6) {
+  db.exec(
+    readFileSync(new URL("./migrations/006_allocation_history.sql", import.meta.url), "utf8"),
+  );
+  db.prepare("UPDATE allocation_history SET recorded_at=? WHERE is_baseline=1").run(now);
+  db.prepare("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(6,?,?)").run(
+    "allocation history",
+    now,
+  );
+  db.exec("PRAGMA user_version = 6");
+}
 db.prepare("DELETE FROM pricing_quote_funnel WHERE offered_at < ?").run(
   now - 90 * 24 * 60 * 60_000,
 );
@@ -145,6 +169,28 @@ db.prepare("UPDATE settings SET value_json=? WHERE key='settings'").run(
 const insertLane = db.prepare("INSERT OR IGNORE INTO lanes(id,pair_id,x,y) VALUES(?,?,?,?)");
 for (let lane = 1; lane <= 12; lane += 1)
   insertLane.run(lane, Math.ceil(lane / 2), Math.floor((lane - 1) / 2), (lane - 1) % 2);
+const operationalConfigHistoryCount = db
+  .prepare("SELECT COUNT(*) AS count FROM operational_config_history")
+  .get().count;
+if (operationalConfigHistoryCount === 0) {
+  const activeLaneIds = db
+    .prepare("SELECT id FROM lanes WHERE active=1 ORDER BY id")
+    .all()
+    .map((lane) => lane.id);
+  const insertHistory = db.prepare(
+    `INSERT INTO operational_config_history(
+      effective_at,recorded_at,weekly_hours_json,exceptions_json,active_lane_ids_json,preparation_minutes,is_baseline
+    ) VALUES(?,?,?,?,?,?,?)`,
+  );
+  const values = [
+    JSON.stringify(migratedSettings.weeklyHours ?? {}),
+    JSON.stringify(migratedSettings.exceptions ?? {}),
+    JSON.stringify(activeLaneIds),
+    migratedSettings.preparationMinutes,
+  ];
+  insertHistory.run(0, now, ...values, 1);
+  insertHistory.run(now, now, ...values, 0);
+}
 
 function createUser(email, name, role, password) {
   const existing = db.prepare("SELECT id FROM users WHERE email = ?").get(email);
@@ -524,11 +570,47 @@ export function getSettings() {
   );
 }
 
-export function saveSettings(settings, actorId) {
+export function saveSettings(settings, actorId, effectiveAt = Date.now()) {
+  const updatedAt = effectiveAt;
   db.prepare("UPDATE settings SET value_json=?,updated_at=?,updated_by=? WHERE key='settings'").run(
     JSON.stringify(settings),
-    Date.now(),
+    updatedAt,
     actorId,
+  );
+  const latest = db
+    .prepare("SELECT * FROM operational_config_history ORDER BY effective_at DESC LIMIT 1")
+    .get();
+  const activeLaneIds = db
+    .prepare("SELECT id FROM lanes WHERE active=1 ORDER BY id")
+    .all()
+    .map((lane) => lane.id);
+  const next = {
+    weeklyHoursJson: JSON.stringify(settings.weeklyHours ?? {}),
+    exceptionsJson: JSON.stringify(settings.exceptions ?? {}),
+    activeLaneIdsJson: JSON.stringify(activeLaneIds),
+    preparationMinutes: Number(settings.preparationMinutes ?? 0),
+  };
+  if (
+    latest &&
+    latest.weekly_hours_json === next.weeklyHoursJson &&
+    latest.exceptions_json === next.exceptionsJson &&
+    latest.active_lane_ids_json === next.activeLaneIdsJson &&
+    latest.preparation_minutes === next.preparationMinutes
+  )
+    return;
+
+  const capacityEffectiveAt = Math.max(updatedAt, Number(latest?.effective_at ?? 0) + 1);
+  db.prepare(
+    `INSERT INTO operational_config_history(
+      effective_at,recorded_at,weekly_hours_json,exceptions_json,active_lane_ids_json,preparation_minutes,is_baseline
+    ) VALUES(?,?,?,?,?,?,0)`,
+  ).run(
+    capacityEffectiveAt,
+    updatedAt,
+    next.weeklyHoursJson,
+    next.exceptionsJson,
+    next.activeLaneIdsJson,
+    next.preparationMinutes,
   );
 }
 

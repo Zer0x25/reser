@@ -17,8 +17,6 @@ import {
 import {
   DYNAMIC_PRICING_MODES,
   DYNAMIC_PRICING_RULE_VERSION,
-  availableLaneIntervals,
-  availableLaneHours,
   calculateQuote,
   findAlternatives,
   formatLocalDate,
@@ -47,6 +45,7 @@ import {
 } from "./db.mjs";
 import { summarizePricingFunnel } from "./pricing-funnel.mjs";
 import {
+  buildHistoricalCapacityIntervals,
   summarizeInventoryPerformance,
   summarizeOperationalPerformance,
   summarizePricingPerformance,
@@ -1114,6 +1113,7 @@ function allocateReservation(dbConn, reservationId, candidate) {
     "INSERT INTO allocations(id,reservation_id,lane_id,start_ms,end_ms,active,created_at) VALUES(?,?,?,?,?,1,?)",
   );
   const settings = getSettings();
+  const createdAt = Date.now();
   for (const lane of candidate.lanes)
     insert.run(
       randomUUID(),
@@ -1121,7 +1121,7 @@ function allocateReservation(dbConn, reservationId, candidate) {
       lane,
       candidate.startMs,
       candidate.endMs + settings.preparationMinutes * 60_000,
-      Date.now(),
+      createdAt,
     );
 }
 function checkExistingRequest(idempotencyKey) {
@@ -1671,7 +1671,9 @@ async function handleApi(req, res, url) {
         "La cancelación dentro de las 24 horas previas requiere que recepción revise las condiciones.",
       );
     transaction((conn) => {
-      conn.prepare("UPDATE allocations SET active=0 WHERE reservation_id=?").run(reservation.id);
+      conn
+        .prepare("UPDATE allocations SET active=0,changed_at=? WHERE reservation_id=?")
+        .run(now, reservation.id);
       conn
         .prepare(
           "UPDATE reservations SET commercial_status='cancelled',inventory_status='released',manage_token_hash=NULL,updated_at=? WHERE id=?",
@@ -1866,8 +1868,10 @@ async function handleApi(req, res, url) {
       );
       for (const row of movable)
         conn
-          .prepare("UPDATE allocations SET active=0 WHERE reservation_id=? AND active=1")
-          .run(row.id);
+          .prepare(
+            "UPDATE allocations SET active=0,changed_at=? WHERE reservation_id=? AND active=1",
+          )
+          .run(now, row.id);
       const ordered = [...movable].sort(
         (a, b) =>
           b.lane_count - a.lane_count || a.start_ms - b.start_ms || a.code.localeCompare(b.code),
@@ -2150,7 +2154,14 @@ async function handleApi(req, res, url) {
               quoteClp: candidate.quote.totalClp,
             },
           };
-        conn.prepare("UPDATE allocations SET active=0 WHERE reservation_id=? AND active=1").run(id);
+        conn
+          .prepare("UPDATE reservations SET start_ms=?,end_ms=?,updated_at=? WHERE id=?")
+          .run(startMs, endMs, now, id);
+        conn
+          .prepare(
+            "UPDATE allocations SET active=0,changed_at=? WHERE reservation_id=? AND active=1",
+          )
+          .run(now, id);
         allocateReservation(conn, id, candidate);
         const quoteJson = {
           ...candidate.quote,
@@ -2243,14 +2254,14 @@ async function handleApi(req, res, url) {
       transaction((conn) => {
         conn
           .prepare(
-            "UPDATE allocations SET end_ms=MIN(end_ms,?) WHERE reservation_id=? AND active=1",
-          )
-          .run(releaseAt, id);
-        conn
-          .prepare(
             "UPDATE reservations SET effective_end_ms=?,commercial_status='finished',inventory_status='released',updated_at=? WHERE id=?",
           )
           .run(effectiveEnd, now, id);
+        conn
+          .prepare(
+            "UPDATE allocations SET end_ms=MIN(end_ms,?),changed_at=? WHERE reservation_id=? AND active=1",
+          )
+          .run(releaseAt, now, id);
         addAudit(actor, "booking_finished", "reservation", id, {
           scheduledEnd: reservation.end_ms,
           effectiveEnd,
@@ -2273,7 +2284,11 @@ async function handleApi(req, res, url) {
         throw new HttpError(400, "Elige mantener la reserva o liberar sus pistas.");
       transaction(() => {
         const release = body.resolution === "release";
-        if (release) db.prepare("UPDATE allocations SET active=0 WHERE reservation_id=?").run(id);
+        if (release)
+          db.prepare("UPDATE allocations SET active=0,changed_at=? WHERE reservation_id=?").run(
+            now,
+            id,
+          );
         db.prepare(
           "UPDATE reservations SET commercial_status=?,inventory_status=?,updated_at=? WHERE id=?",
         ).run(release ? "cancelled" : "no_show_review", release ? "released" : "assigned", now, id);
@@ -2473,8 +2488,10 @@ async function handleApi(req, res, url) {
           )
           .run(candidate.endMs, quote.totalClp, JSON.stringify(combinedQuote), now, id);
         conn
-          .prepare("UPDATE allocations SET end_ms=? WHERE reservation_id=? AND active=1")
-          .run(candidate.endMs + settings.preparationMinutes * 60_000, id);
+          .prepare(
+            "UPDATE allocations SET end_ms=?,changed_at=? WHERE reservation_id=? AND active=1",
+          )
+          .run(candidate.endMs + settings.preparationMinutes * 60_000, now, id);
         addAudit(actor, "booking_extended", "reservation", id, {
           minutes,
           addedClp: quote.totalClp,
@@ -2495,7 +2512,10 @@ async function handleApi(req, res, url) {
         return json(res, 200, { booking: reservationPublic(reservation), reused: true });
       if (reservation.start_ms - now >= getSettings().cancellationFreeHours * 3_600_000) {
         transaction(() => {
-          db.prepare("UPDATE allocations SET active=0 WHERE reservation_id=?").run(id);
+          db.prepare("UPDATE allocations SET active=0,changed_at=? WHERE reservation_id=?").run(
+            now,
+            id,
+          );
           db.prepare(
             "UPDATE reservations SET commercial_status='cancelled',inventory_status='released',updated_at=? WHERE id=?",
           ).run(now, id);
@@ -2580,8 +2600,8 @@ async function handleApi(req, res, url) {
           )
           .run(now, request.reservation_id);
         conn
-          .prepare("UPDATE allocations SET active=0 WHERE reservation_id=?")
-          .run(request.reservation_id);
+          .prepare("UPDATE allocations SET active=0,changed_at=? WHERE reservation_id=?")
+          .run(now, request.reservation_id);
         addAudit(actor, "request_rejected", "booking_request", requestId, {
           reason: String(body.reason ?? "").slice(0, 300),
         });
@@ -2774,38 +2794,52 @@ async function handleApi(req, res, url) {
          WHERE r.start_ms>=? AND r.start_ms<?`,
       )
       .get(from, to).amount;
-    const availableHours = availableLaneHours({
-      fromMs: from,
-      toMs: to,
-      weeklyHours: currentSettings.weeklyHours,
-      exceptions: currentSettings.exceptions,
-      activeLaneIds,
-      maintenanceBlocks,
-    });
-    const availableIntervals = availableLaneIntervals({
+    const capacityHistory = db
+      .prepare(
+        `SELECT effective_at AS effectiveAt,weekly_hours_json AS weeklyHoursJson,
+                exceptions_json AS exceptionsJson,active_lane_ids_json AS activeLaneIdsJson,
+                preparation_minutes AS preparationMinutes,is_baseline AS isBaseline
+         FROM operational_config_history
+         WHERE effective_at=(SELECT MAX(effective_at) FROM operational_config_history WHERE effective_at<=?)
+            OR (effective_at>? AND effective_at<?)
+         ORDER BY effective_at`,
+      )
+      .all(capacityFrom, capacityFrom, capacityTo);
+    const historicalCapacity = buildHistoricalCapacityIntervals({
       fromMs: capacityFrom,
       toMs: capacityTo,
-      weeklyHours: currentSettings.weeklyHours,
-      exceptions: currentSettings.exceptions,
-      activeLaneIds,
+      reportFromMs: from,
+      reportToMs: to,
+      history: capacityHistory,
       maintenanceBlocks,
     });
+    const assignmentHistoryStart = db
+      .prepare(
+        "SELECT MIN(recorded_at) AS recordedAt FROM operational_config_history WHERE is_baseline=1",
+      )
+      .get().recordedAt;
     const inventoryReservations = db
       .prepare(
-        `SELECT r.id AS reservationId,a.lane_id AS laneId,
-                r.start_ms AS reservationStartMs,MIN(r.end_ms,a.end_ms) AS reservationEndMs,
-                a.start_ms AS allocationStartMs,a.end_ms AS allocationEndMs
-         FROM allocations a JOIN reservations r ON r.id=a.reservation_id
-         WHERE a.active=1 AND r.commercial_status NOT IN ('cancelled','rejected')
-           AND a.start_ms<? AND a.end_ms>?`,
+        `SELECT h.reservation_id AS reservationId,h.lane_id AS laneId,
+                h.reservation_start_ms AS reservationStartMs,
+                h.reservation_end_ms AS reservationEndMs,h.effective_end_ms AS effectiveEndMs,
+                h.allocation_start_ms AS allocationStartMs,h.allocation_end_ms AS allocationEndMs,
+                h.active_from AS assignmentFromMs,h.active_to AS assignmentToMs,
+                h.recorded_at AS assignmentRecordedAt,h.is_baseline AS assignmentBaseline
+         FROM allocation_history h
+         WHERE h.reservation_start_ms<? AND h.reservation_end_ms>?
+           AND h.active_from<? AND (h.active_to IS NULL OR h.active_to>?)`,
       )
-      .all(capacityTo, capacityFrom);
+      .all(capacityTo, capacityFrom, capacityTo, capacityFrom);
     const inventory = summarizeInventoryPerformance({
       fromMs: from,
       toMs: to,
-      availableIntervals,
+      availableIntervals: historicalCapacity.intervals,
       reservations: inventoryReservations,
       minimumSellableMinutes: 60 + currentSettings.preparationMinutes,
+      configurationEstimated: historicalCapacity.configurationEstimated,
+      assignmentHistoryEstimated:
+        Number.isSafeInteger(assignmentHistoryStart) && from < assignmentHistoryStart,
     });
     prunePricingFunnel(db, to);
     const funnelRows = db
@@ -2830,7 +2864,7 @@ async function handleApi(req, res, url) {
       to,
       operational: summarizeOperationalPerformance({
         verifiedRevenueClp: operatingRevenueClp,
-        availableLaneHours: availableHours,
+        availableLaneHours: inventory.availableLaneHours,
         activeLaneCount: activeLaneIds.length,
         inventory,
       }),
@@ -3087,6 +3121,7 @@ async function handleApi(req, res, url) {
         ? previousConfigVersion + 1
         : previousConfigVersion || 1,
     };
+    const settingsEffectiveAt = Date.now();
     transaction((conn) => {
       if (old.preparationMinutes !== updated.preparationMinutes) {
         const allocations = conn
@@ -3111,15 +3146,16 @@ async function handleApi(req, res, url) {
         }
         for (const allocation of allocations)
           conn
-            .prepare("UPDATE allocations SET end_ms=? WHERE id=?")
+            .prepare("UPDATE allocations SET end_ms=?,changed_at=? WHERE id=?")
             .run(
               allocation.end_ms -
                 old.preparationMinutes * 60_000 +
                 updated.preparationMinutes * 60_000,
+              settingsEffectiveAt,
               allocation.id,
             );
       }
-      saveSettings(updated, actor.id);
+      saveSettings(updated, actor.id, settingsEffectiveAt);
       addAudit(actor, "settings_updated", "settings", "venue", {
         changed: Object.keys(body),
         preparationMinutes: updated.preparationMinutes,

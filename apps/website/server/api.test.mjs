@@ -1024,6 +1024,8 @@ test("dynamic pricing requires explicit configuration and honors the locked quot
   assert.equal(performanceData.operational.activeLaneCount, 12);
   assert.ok(performanceData.operational.inventory.availableLaneHours > 0);
   assert.ok(performanceData.operational.inventory.minimumSellableMinutes >= 60);
+  assert.equal(performanceData.operational.inventory.configurationEstimated, true);
+  assert.equal(performanceData.operational.inventory.assignmentEstimated, true);
   assert.ok(
     performanceData.operational.inventory.occupancyPercent === null ||
       (performanceData.operational.inventory.occupancyPercent >= 0 &&
