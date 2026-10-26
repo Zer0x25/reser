@@ -1020,6 +1020,13 @@ test("dynamic pricing requires explicit configuration and honors the locked quot
   assert.equal(pricingPerformance.status, 200);
   const performanceData = await pricingPerformance.json();
   assert.equal(performanceData.windowDays, 30);
+  assert.ok(performanceData.operational.availableLaneHours > 0);
+  assert.equal(performanceData.operational.activeLaneCount, 12);
+  assert.ok(Number.isSafeInteger(performanceData.operational.verifiedRevenueClp));
+  assert.ok(
+    performanceData.operational.revenuePerAvailableLaneHourClp === null ||
+      Number.isSafeInteger(performanceData.operational.revenuePerAvailableLaneHourClp),
+  );
   assert.equal(performanceData.totals.dynamicAppliedCount, 1);
   assert.equal(performanceData.totals.dynamicDiscountCommittedClp, 3000);
   assert.equal(performanceData.totals.dynamicQuoteTotalClp, 17000);

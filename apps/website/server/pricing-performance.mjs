@@ -76,3 +76,23 @@ export function summarizePricingPerformance(rows) {
     byChannel: [...channels.values()].sort((a, b) => a.channel.localeCompare(b.channel)),
   };
 }
+
+export function summarizeOperationalPerformance({
+  verifiedRevenueClp,
+  availableLaneHours,
+  activeLaneCount,
+}) {
+  const revenue = Number(verifiedRevenueClp);
+  const hours = Number(availableLaneHours);
+  const lanes = Number(activeLaneCount);
+  const safeRevenue = Number.isSafeInteger(revenue) ? revenue : 0;
+  const safeHours = Number.isFinite(hours) ? Math.max(0, hours) : 0;
+  const safeLaneCount = Number.isSafeInteger(lanes) ? Math.max(0, lanes) : 0;
+
+  return {
+    verifiedRevenueClp: safeRevenue,
+    availableLaneHours: Number(safeHours.toFixed(2)),
+    activeLaneCount: safeLaneCount,
+    revenuePerAvailableLaneHourClp: safeHours > 0 ? Math.round(safeRevenue / safeHours) : null,
+  };
+}

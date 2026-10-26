@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { summarizePricingPerformance } from "./pricing-performance.mjs";
+import {
+  summarizeOperationalPerformance,
+  summarizePricingPerformance,
+} from "./pricing-performance.mjs";
 
 test("pricing performance separates applied discounts, shadow potential, and cancelled bookings", () => {
   const report = summarizePricingPerformance([
@@ -56,4 +59,28 @@ test("pricing performance separates applied discounts, shadow potential, and can
   );
   assert.equal(report.byChannel[1].dynamicDiscountCommittedClp, 2_400);
   assert.equal(report.byChannel[1].dynamicPotentialNotAppliedClp, 1_800);
+});
+
+test("operational performance divides net verified revenue by available lane-hours", () => {
+  assert.deepEqual(
+    summarizeOperationalPerformance({
+      verifiedRevenueClp: 25_500,
+      availableLaneHours: 2.5,
+      activeLaneCount: 12,
+    }),
+    {
+      verifiedRevenueClp: 25_500,
+      availableLaneHours: 2.5,
+      activeLaneCount: 12,
+      revenuePerAvailableLaneHourClp: 10_200,
+    },
+  );
+  assert.equal(
+    summarizeOperationalPerformance({
+      verifiedRevenueClp: 0,
+      availableLaneHours: 0,
+      activeLaneCount: 0,
+    }).revenuePerAvailableLaneHourClp,
+    null,
+  );
 });

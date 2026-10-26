@@ -90,6 +90,12 @@ async function openAdmin(page: Page) {
         windowDays: 30,
         from: 0,
         to: 0,
+        operational: {
+          verifiedRevenueClp: 42_000,
+          availableLaneHours: 560,
+          activeLaneCount: 12,
+          revenuePerAvailableLaneHourClp: 75,
+        },
         totals: {
           reservationCount: 8,
           confirmedCount: 5,

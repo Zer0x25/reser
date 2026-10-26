@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  availableLaneHours,
   calculateQuote,
   chooseClosest,
   chooseCompact,
@@ -106,6 +107,64 @@ test("date exceptions override weekly hours and CLP half ties round upward", () 
     settings: { ...settings, generalRateClpPerLaneHour: 10001 },
   });
   assert.equal(quote.baseClp, 5001);
+});
+
+test("available lane-hours respect overnight schedules and subtract merged maintenance", () => {
+  const weeklyHours = Object.fromEntries(
+    Array.from({ length: 7 }, (_, day) => [String(day), { closed: true }]),
+  );
+  weeklyHours["6"] = { open: "20:00", close: "02:00" };
+  const fromMs = localDateTimeToEpoch("2026-10-25T00:00");
+  const toMs = localDateTimeToEpoch("2026-10-25T02:00");
+  const available = availableLaneHours({
+    fromMs,
+    toMs,
+    weeklyHours,
+    activeLaneIds: [1, 2, 2],
+    maintenanceBlocks: [
+      {
+        laneId: 1,
+        startMs: localDateTimeToEpoch("2026-10-25T00:30"),
+        endMs: localDateTimeToEpoch("2026-10-25T01:30"),
+      },
+      {
+        laneId: null,
+        startMs: localDateTimeToEpoch("2026-10-25T01:00"),
+        endMs: localDateTimeToEpoch("2026-10-25T01:30"),
+      },
+      {
+        laneId: 3,
+        startMs: fromMs,
+        endMs: toMs,
+      },
+    ],
+  });
+
+  assert.equal(available, 2.5);
+  assert.equal(
+    availableLaneHours({
+      fromMs,
+      toMs,
+      weeklyHours,
+      activeLaneIds: [],
+    }),
+    0,
+  );
+});
+
+test("closed date exceptions remove scheduled capacity for that date", () => {
+  const fromMs = localDateTimeToEpoch("2026-10-25T12:00");
+  const toMs = localDateTimeToEpoch("2026-10-25T22:00");
+  assert.equal(
+    availableLaneHours({
+      fromMs,
+      toMs,
+      weeklyHours: { 0: { open: "12:00", close: "22:00" } },
+      exceptions: { "2026-10-25": { closed: true } },
+      activeLaneIds: [1, 2],
+    }),
+    0,
+  );
 });
 
 test("CLP quote prorates across tariff boundaries and chooses one promotion", () => {

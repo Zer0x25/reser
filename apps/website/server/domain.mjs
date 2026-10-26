@@ -116,6 +116,66 @@ export function matchesHours(startMs, endMs, weeklyHours, exceptions = {}) {
   return Boolean(operatingHoursForInterval(startMs, endMs, weeklyHours, exceptions));
 }
 
+export function availableLaneHours({
+  fromMs,
+  toMs,
+  weeklyHours,
+  exceptions = {},
+  activeLaneIds = [],
+  maintenanceBlocks = [],
+}) {
+  if (!Number.isSafeInteger(fromMs) || !Number.isSafeInteger(toMs) || toMs <= fromMs) return 0;
+  const lanes = [...new Set(activeLaneIds)].filter(
+    (laneId) => Number.isSafeInteger(laneId) && laneId > 0,
+  );
+  if (lanes.length === 0) return 0;
+
+  const firstDate = shiftLocalDate(formatLocalDate(fromMs), -1);
+  const lastDate = formatLocalDate(toMs - 1);
+  let totalMs = 0;
+  for (let date = firstDate; date <= lastDate; date = shiftLocalDate(date, 1)) {
+    let window;
+    try {
+      window = operatingHoursForDate(date, weeklyHours, exceptions);
+    } catch {
+      continue;
+    }
+    if (!window) continue;
+    const windowStart = Math.max(fromMs, window.openMs);
+    const windowEnd = Math.min(toMs, window.closeMs);
+    if (windowEnd <= windowStart) continue;
+
+    for (const laneId of lanes) {
+      const intervals = (maintenanceBlocks ?? [])
+        .filter((block) => block.laneId == null || block.laneId === laneId)
+        .map((block) => ({
+          startMs: Math.max(windowStart, Number(block.startMs)),
+          endMs: Math.min(windowEnd, Number(block.endMs)),
+        }))
+        .filter((block) => Number.isFinite(block.startMs) && block.endMs > block.startMs)
+        .sort((a, b) => a.startMs - b.startMs);
+      let blockedMs = 0;
+      let mergedStart = null;
+      let mergedEnd = null;
+      for (const interval of intervals) {
+        if (mergedStart == null) {
+          mergedStart = interval.startMs;
+          mergedEnd = interval.endMs;
+        } else if (interval.startMs <= mergedEnd) {
+          mergedEnd = Math.max(mergedEnd, interval.endMs);
+        } else {
+          blockedMs += mergedEnd - mergedStart;
+          mergedStart = interval.startMs;
+          mergedEnd = interval.endMs;
+        }
+      }
+      if (mergedStart != null) blockedMs += mergedEnd - mergedStart;
+      totalMs += Math.max(0, windowEnd - windowStart - blockedMs);
+    }
+  }
+  return Number((totalMs / HOUR_MS).toFixed(4));
+}
+
 const MINUTE_MS = 60_000;
 const HOUR_MS = 3_600_000;
 

@@ -22,8 +22,8 @@ Seguimiento de mejoras de flujo, interfaz y cobertura identificadas al revisar e
 - [x] **Medir el recorrido desde cotización hasta reserva.** Contar alternativas web renderizadas, selecciones y solicitudes creadas con la cotización firmada; desglosar por tipo de precio. Guardar solo hash de token, tipo y fechas, sin datos personales, con retención automática de 90 días.
 - [x] **Seguir las reservas hasta confirmación y pago.** Enlazar la cotización con una referencia interna a la reserva por hasta 90 días; mostrar confirmaciones, pagos completos actuales y pagos verificados netos de devoluciones.
 - [x] **Medir ingreso por pista-hora contratada.** Dividir los pagos verificados netos de reservas confirmadas no canceladas por las horas y pistas contratadas; no presentarlo como ingreso por pista-hora disponible.
+- [x] **Calcular ingreso por pista-hora disponible.** Dividir los pagos verificados netos por reservas en el período entre las horas abiertas de pistas activas, descontando mantenciones registradas. El horario configurado actual se usa para períodos históricos y puede hacer la estimación imprecisa si hubo cambios.
 
 ## Pendiente de medición
 
-- [ ] **Calcular ingreso por pista-hora disponible.** Definir capacidad por horario, pista activa y bloque de mantenimiento para las fechas de reserva, y compararla con pagos netos del mismo período operativo.
 - [ ] **Historial de ocupación y fragmentación.** Medir ocupación y huecos no vendibles con una ventana y una definición operativa acordadas.

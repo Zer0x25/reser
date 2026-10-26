@@ -17,6 +17,7 @@ import {
 import {
   DYNAMIC_PRICING_MODES,
   DYNAMIC_PRICING_RULE_VERSION,
+  availableLaneHours,
   calculateQuote,
   findAlternatives,
   formatLocalDate,
@@ -44,7 +45,10 @@ import {
   transaction,
 } from "./db.mjs";
 import { summarizePricingFunnel } from "./pricing-funnel.mjs";
-import { summarizePricingPerformance } from "./pricing-performance.mjs";
+import {
+  summarizeOperationalPerformance,
+  summarizePricingPerformance,
+} from "./pricing-performance.mjs";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 const port = Number(process.env.PORT ?? 3001);
@@ -2738,6 +2742,41 @@ async function handleApi(req, res, url) {
          FROM reservations WHERE created_at>=? AND created_at<? ORDER BY created_at DESC`,
       )
       .all(from, to);
+    const currentSettings = getSettings();
+    const activeLaneIds = db
+      .prepare("SELECT id FROM lanes WHERE active=1 ORDER BY id")
+      .all()
+      .map((lane) => lane.id);
+    const maintenanceBlocks = db
+      .prepare(
+        `SELECT b.lane_id AS laneId,
+                MAX(b.start_ms,b.created_at) AS startMs,
+                MIN(b.end_ms,COALESCE(
+                  (SELECT MIN(a.created_at) FROM audit_log a
+                   WHERE a.entity_type='maintenance_block' AND a.entity_id=b.id
+                     AND a.action='maintenance_block_released'),
+                  b.end_ms
+                )) AS endMs
+         FROM maintenance_blocks b WHERE b.created_at<? AND b.end_ms>?`,
+      )
+      .all(to, from);
+    const operatingRevenueClp = db
+      .prepare(
+        `SELECT COALESCE(SUM(CASE WHEN p.status='verified' THEN p.amount_clp
+                                  WHEN p.status='refund_recorded' THEN -p.amount_clp
+                                  ELSE 0 END),0) AS amount
+         FROM reservations r LEFT JOIN payments p ON p.reservation_id=r.id
+         WHERE r.start_ms>=? AND r.start_ms<?`,
+      )
+      .get(from, to).amount;
+    const availableHours = availableLaneHours({
+      fromMs: from,
+      toMs: to,
+      weeklyHours: currentSettings.weeklyHours,
+      exceptions: currentSettings.exceptions,
+      activeLaneIds,
+      maintenanceBlocks,
+    });
     prunePricingFunnel(db, to);
     const funnelRows = db
       .prepare(
@@ -2759,6 +2798,11 @@ async function handleApi(req, res, url) {
       windowDays,
       from,
       to,
+      operational: summarizeOperationalPerformance({
+        verifiedRevenueClp: operatingRevenueClp,
+        availableLaneHours: availableHours,
+        activeLaneCount: activeLaneIds.length,
+      }),
       funnel: summarizePricingFunnel(funnelRows),
       ...summarizePricingPerformance(rows),
     });

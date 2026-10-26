@@ -151,6 +151,9 @@ test("customer sees and books an eligible dynamic price", async ({ page, request
     await adminNav.getByRole("button", { name: /Precio dinámico/ }).click();
     const performance = page.locator(".pricing-performance");
     await expect(performance).toContainText("Resultados del piloto");
+    await expect(performance.locator(".pricing-available-capacity")).toContainText(
+      "Ingreso por pista-hora disponible",
+    );
     await expect(performance.locator(".pricing-performance-metrics article").nth(1)).toContainText(
       "1",
     );
