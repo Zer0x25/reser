@@ -907,6 +907,12 @@ test("dynamic pricing requires explicit configuration and honors the locked quot
     body: JSON.stringify({ generalRateClpPerLaneHour: 20000 }),
   });
   assert.equal(rateChange.status, 200);
+  const approvalThreshold = await fetch(`${base}/api/staff/settings`, {
+    method: "PUT",
+    headers: { cookie: adminCookie, origin: base, "content-type": "application/json" },
+    body: JSON.stringify({ requireManualApprovalFromLanes: 1 }),
+  });
+  assert.equal(approvalThreshold.status, 200);
 
   const requestBody = {
     idempotencyKey: "dynamic-locked-quote-request",
@@ -951,10 +957,62 @@ test("dynamic pricing requires explicit configuration and honors the locked quot
   });
   assert.equal(created.status, 201);
   const createdData = await created.json();
+  assert.equal(createdData.status, "pending_approval");
   assert.equal(createdData.quote.baseClp, 12000);
   assert.equal(createdData.quote.dynamic.discountClp, 2400);
   assert.equal(createdData.quote.totalClp, 9600);
   assert.equal(createdData.quote.pricingSource, "dynamic");
+
+  const approval = await fetch(`${base}/api/staff/requests/${createdData.id}/approve`, {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie: adminCookie },
+    body: JSON.stringify({}),
+  });
+  assert.equal(approval.status, 200);
+  const approvalData = await approval.json();
+  assert.equal(approvalData.priceChanged, true);
+  assert.equal(approvalData.amountClp, 17_000);
+  const manageToken = new URL(createdData.manageLink).searchParams.get("token");
+  const acceptedPrice = await fetch(`${base}/api/manage/accept-price`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${manageToken}`,
+    },
+    body: JSON.stringify({ accept: true }),
+  });
+  assert.equal(acceptedPrice.status, 200);
+  const acceptedPriceData = await acceptedPrice.json();
+  assert.equal(acceptedPriceData.booking.status, "confirmed");
+  assert.equal(acceptedPriceData.booking.quoteClp, 17_000);
+
+  const dynamicPayment = await fetch(
+    `${base}/api/staff/bookings/${createdData.booking.id}/payments`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: adminCookie },
+      body: JSON.stringify({
+        idempotencyKey: "dynamic-funnel-payment",
+        amountClp: acceptedPriceData.booking.quoteClp,
+        method: "transfer",
+        status: "reported",
+        reference: "DYNAMIC-FUNNEL-1",
+      }),
+    },
+  );
+  assert.equal(dynamicPayment.status, 201);
+  const dynamicPaymentData = await dynamicPayment.json();
+  assert.equal(dynamicPaymentData.financialStatus, "pending_verification");
+  const verifiedDynamicPayment = await fetch(
+    `${base}/api/staff/payments/${dynamicPaymentData.paymentId}/verify`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: adminCookie },
+      body: JSON.stringify({ reference: "DYNAMIC-FUNNEL-1 verified" }),
+    },
+  );
+  assert.equal(verifiedDynamicPayment.status, 200);
+  assert.equal((await verifiedDynamicPayment.json()).financialStatus, "paid");
 
   const pricingPerformance = await fetch(`${base}/api/staff/pricing/performance?days=30`, {
     headers: { cookie: adminCookie },
@@ -963,21 +1021,58 @@ test("dynamic pricing requires explicit configuration and honors the locked quot
   const performanceData = await pricingPerformance.json();
   assert.equal(performanceData.windowDays, 30);
   assert.equal(performanceData.totals.dynamicAppliedCount, 1);
-  assert.equal(performanceData.totals.dynamicDiscountCommittedClp, 2400);
-  assert.equal(performanceData.totals.dynamicQuoteTotalClp, 9600);
+  assert.equal(performanceData.totals.dynamicDiscountCommittedClp, 3000);
+  assert.equal(performanceData.totals.dynamicQuoteTotalClp, 17000);
   assert.equal(
     performanceData.byChannel.find((channel) => channel.channel === "web")
       .dynamicDiscountCommittedClp,
-    2400,
+    3000,
   );
   assert.equal(performanceData.funnel.totals.offeredCount, alternatives.length);
   assert.equal(performanceData.funnel.totals.selectedCount, 1);
   assert.equal(performanceData.funnel.totals.reservedCount, 1);
+  assert.equal(performanceData.funnel.totals.confirmedCount, 1);
+  assert.equal(performanceData.funnel.totals.paidCount, 1);
+  assert.equal(performanceData.funnel.totals.verifiedRevenueClp, 17000);
+  assert.equal(performanceData.funnel.totals.contractedLaneHours, 1);
+  assert.equal(performanceData.funnel.totals.revenuePerLaneHourClp, 17000);
   assert.equal(
     performanceData.funnel.byPricingGroup.find((group) => group.pricingGroup === "dynamic_applied")
       .reservedCount,
     1,
   );
+  const dynamicGroup = performanceData.funnel.byPricingGroup.find(
+    (group) => group.pricingGroup === "dynamic_applied",
+  );
+  assert.equal(dynamicGroup.confirmedCount, 1);
+  assert.equal(dynamicGroup.paidCount, 1);
+  assert.equal(dynamicGroup.verifiedRevenueClp, 17000);
+  assert.equal(dynamicGroup.revenuePerLaneHourClp, 17000);
+
+  const dynamicRefund = await fetch(
+    `${base}/api/staff/bookings/${createdData.booking.id}/payments`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: adminCookie },
+      body: JSON.stringify({
+        idempotencyKey: "dynamic-funnel-refund",
+        amountClp: 1600,
+        method: "refund",
+        status: "refund_recorded",
+        reference: "DYNAMIC-FUNNEL-REFUND",
+      }),
+    },
+  );
+  assert.equal(dynamicRefund.status, 201);
+  assert.equal((await dynamicRefund.json()).financialStatus, "partially_paid");
+  const performanceAfterRefund = await fetch(`${base}/api/staff/pricing/performance?days=30`, {
+    headers: { cookie: adminCookie },
+  });
+  assert.equal(performanceAfterRefund.status, 200);
+  const afterRefundFunnel = (await performanceAfterRefund.json()).funnel;
+  assert.equal(afterRefundFunnel.totals.paidCount, 0);
+  assert.equal(afterRefundFunnel.totals.verifiedRevenueClp, 15400);
+  assert.equal(afterRefundFunnel.totals.revenuePerLaneHourClp, 15400);
 
   const unsupportedPerformanceWindow = await fetch(`${base}/api/staff/pricing/performance?days=1`, {
     headers: { cookie: adminCookie },

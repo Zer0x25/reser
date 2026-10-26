@@ -48,6 +48,16 @@ if (schemaVersion < 3) {
   );
   db.exec("PRAGMA user_version = 3");
 }
+if (schemaVersion < 4) {
+  db.exec(
+    readFileSync(new URL("./migrations/004_pricing_funnel_outcomes.sql", import.meta.url), "utf8"),
+  );
+  db.prepare("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(4,?,?)").run(
+    "pricing funnel outcomes",
+    now,
+  );
+  db.exec("PRAGMA user_version = 4");
+}
 db.prepare("DELETE FROM pricing_quote_funnel WHERE offered_at < ?").run(
   now - 90 * 24 * 60 * 60_000,
 );

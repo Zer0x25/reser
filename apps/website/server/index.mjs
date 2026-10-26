@@ -187,17 +187,19 @@ function recordPricingFunnelEvent(
   conn,
   quoteToken,
   payload,
-  { selectedAt = null, reservedAt = null } = {},
+  { selectedAt = null, reservedAt = null, reservationId = null, confirmedAt = null } = {},
 ) {
   const selected = selectedAt ?? reservedAt;
   conn
     .prepare(
       `INSERT INTO pricing_quote_funnel(
-        quote_token_hash,channel,pricing_group,offered_at,expires_at,selected_at,reserved_at
-      ) VALUES(?,?,?,?,?,?,?)
+        quote_token_hash,channel,pricing_group,offered_at,expires_at,selected_at,reserved_at,reservation_id,confirmed_at
+      ) VALUES(?,?,?,?,?,?,?,?,?)
       ON CONFLICT(quote_token_hash) DO UPDATE SET
         selected_at=COALESCE(pricing_quote_funnel.selected_at,excluded.selected_at),
-        reserved_at=COALESCE(pricing_quote_funnel.reserved_at,excluded.reserved_at)`,
+        reserved_at=COALESCE(pricing_quote_funnel.reserved_at,excluded.reserved_at),
+        reservation_id=COALESCE(pricing_quote_funnel.reservation_id,excluded.reservation_id),
+        confirmed_at=COALESCE(pricing_quote_funnel.confirmed_at,excluded.confirmed_at)`,
     )
     .run(
       digest(quoteToken),
@@ -207,7 +209,16 @@ function recordPricingFunnelEvent(
       payload.expiresAt,
       selected,
       reservedAt,
+      reservationId,
+      confirmedAt,
     );
+}
+function markPricingFunnelConfirmed(conn, reservationId, confirmedAt) {
+  conn
+    .prepare(
+      "UPDATE pricing_quote_funnel SET confirmed_at=COALESCE(confirmed_at,?) WHERE reservation_id=?",
+    )
+    .run(confirmedAt, reservationId);
 }
 function recordPricingDecision(
   conn,
@@ -1502,6 +1513,8 @@ async function handleApi(req, res, url) {
         recordPricingFunnelEvent(conn, body.quoteToken, lockedQuote, {
           selectedAt: now,
           reservedAt: now,
+          reservationId,
+          confirmedAt: status === "confirmed" ? now : null,
         });
       }
       conn
@@ -1635,6 +1648,7 @@ async function handleApi(req, res, url) {
       conn
         .prepare("UPDATE booking_requests SET status='confirmed',updated_at=? WHERE id=?")
         .run(now, request.id);
+      markPricingFunnelConfirmed(conn, reservation.id, now);
       addAudit({ id: null, role: "client" }, "price_accepted", "booking_request", request.id, {
         amountClp: request.current_quote_clp,
       });
@@ -2624,6 +2638,7 @@ async function handleApi(req, res, url) {
       conn
         .prepare("UPDATE reservations SET commercial_status='confirmed',updated_at=? WHERE id=?")
         .run(now, reservation.id);
+      markPricingFunnelConfirmed(conn, reservation.id, now);
       addAudit(actor, "request_approved", "booking_request", requestId, {
         amountClp: candidate.quote.totalClp,
       });
@@ -2726,8 +2741,18 @@ async function handleApi(req, res, url) {
     prunePricingFunnel(db, to);
     const funnelRows = db
       .prepare(
-        `SELECT pricing_group AS pricingGroup,selected_at AS selectedAt,reserved_at AS reservedAt
-         FROM pricing_quote_funnel WHERE offered_at>=? AND offered_at<? ORDER BY offered_at DESC`,
+        `SELECT f.pricing_group AS pricingGroup,f.selected_at AS selectedAt,
+                f.reserved_at AS reservedAt,f.confirmed_at AS confirmedAt,
+                r.id AS reservationId,r.financial_status AS financialStatus,
+                r.commercial_status AS commercialStatus,r.lane_count AS laneCount,
+                r.start_ms AS startMs,r.end_ms AS endMs,
+                COALESCE((SELECT SUM(CASE WHEN p.status='verified' THEN p.amount_clp
+                                           WHEN p.status='refund_recorded' THEN -p.amount_clp
+                                           ELSE 0 END)
+                          FROM payments p WHERE p.reservation_id=r.id),0) AS verifiedRevenueClp
+         FROM pricing_quote_funnel f
+         LEFT JOIN reservations r ON r.id=f.reservation_id
+         WHERE f.offered_at>=? AND f.offered_at<? ORDER BY f.offered_at DESC`,
       )
       .all(from, to);
     return json(res, 200, {
