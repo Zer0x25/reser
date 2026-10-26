@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  summarizeInventoryPerformance,
   summarizeOperationalPerformance,
   summarizePricingPerformance,
 } from "./pricing-performance.mjs";
@@ -83,4 +84,77 @@ test("operational performance divides net verified revenue by available lane-hou
     }).revenuePerAvailableLaneHourClp,
     null,
   );
+});
+
+test("inventory performance measures booked hours and unbookable gaps per lane", () => {
+  const startMs = Date.parse("2026-10-26T16:00:00Z");
+  const report = summarizeInventoryPerformance({
+    fromMs: startMs,
+    toMs: startMs + 4 * 60 * 60_000,
+    availableIntervals: [{ laneId: 1, startMs, endMs: startMs + 4 * 60 * 60_000 }],
+    reservations: [
+      {
+        reservationId: "one",
+        laneId: 1,
+        reservationStartMs: startMs,
+        reservationEndMs: startMs + 60 * 60_000,
+        allocationStartMs: startMs,
+        allocationEndMs: startMs + 70 * 60_000,
+      },
+      {
+        reservationId: "two",
+        laneId: 1,
+        reservationStartMs: startMs + 135 * 60_000,
+        reservationEndMs: startMs + 195 * 60_000,
+        allocationStartMs: startMs + 135 * 60_000,
+        allocationEndMs: startMs + 205 * 60_000,
+      },
+    ],
+    minimumSellableMinutes: 70,
+  });
+
+  assert.deepEqual(report, {
+    reservationCount: 2,
+    availableLaneHours: 4,
+    committedLaneHours: 2,
+    occupancyPercent: 50,
+    unbookableGapLaneHours: 1.67,
+    unbookableGapPercent: 41.7,
+    minimumSellableMinutes: 70,
+  });
+});
+
+test("inventory performance clips edge gaps to the selected reporting period", () => {
+  const startMs = Date.parse("2026-10-26T16:00:00Z");
+  const report = summarizeInventoryPerformance({
+    fromMs: startMs + 60 * 60_000,
+    toMs: startMs + 3 * 60 * 60_000,
+    availableIntervals: [{ laneId: 1, startMs, endMs: startMs + 4 * 60 * 60_000 }],
+    reservations: [
+      {
+        reservationId: "one",
+        laneId: 1,
+        reservationStartMs: startMs,
+        reservationEndMs: startMs + 60 * 60_000,
+        allocationStartMs: startMs,
+        allocationEndMs: startMs + 70 * 60_000,
+      },
+      {
+        reservationId: "two",
+        laneId: 1,
+        reservationStartMs: startMs + 135 * 60_000,
+        reservationEndMs: startMs + 195 * 60_000,
+        allocationStartMs: startMs + 135 * 60_000,
+        allocationEndMs: startMs + 205 * 60_000,
+      },
+    ],
+    minimumSellableMinutes: 70,
+  });
+
+  assert.equal(report.availableLaneHours, 2);
+  assert.equal(report.committedLaneHours, 0.75);
+  assert.equal(report.occupancyPercent, 37.5);
+  assert.equal(report.unbookableGapLaneHours, 1.08);
+  assert.equal(report.unbookableGapPercent, 54.2);
+  assert.equal(report.reservationCount, 1);
 });

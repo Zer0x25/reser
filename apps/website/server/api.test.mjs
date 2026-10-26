@@ -1022,6 +1022,18 @@ test("dynamic pricing requires explicit configuration and honors the locked quot
   assert.equal(performanceData.windowDays, 30);
   assert.ok(performanceData.operational.availableLaneHours > 0);
   assert.equal(performanceData.operational.activeLaneCount, 12);
+  assert.ok(performanceData.operational.inventory.availableLaneHours > 0);
+  assert.ok(performanceData.operational.inventory.minimumSellableMinutes >= 60);
+  assert.ok(
+    performanceData.operational.inventory.occupancyPercent === null ||
+      (performanceData.operational.inventory.occupancyPercent >= 0 &&
+        performanceData.operational.inventory.occupancyPercent <= 100),
+  );
+  assert.ok(
+    performanceData.operational.inventory.unbookableGapPercent === null ||
+      (performanceData.operational.inventory.unbookableGapPercent >= 0 &&
+        performanceData.operational.inventory.unbookableGapPercent <= 100),
+  );
   assert.ok(Number.isSafeInteger(performanceData.operational.verifiedRevenueClp));
   assert.ok(
     performanceData.operational.revenuePerAvailableLaneHourClp === null ||

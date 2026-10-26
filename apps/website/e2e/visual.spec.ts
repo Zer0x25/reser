@@ -95,6 +95,15 @@ async function openAdmin(page: Page) {
           availableLaneHours: 560,
           activeLaneCount: 12,
           revenuePerAvailableLaneHourClp: 75,
+          inventory: {
+            reservationCount: 8,
+            availableLaneHours: 560,
+            committedLaneHours: 312,
+            occupancyPercent: 55.7,
+            unbookableGapLaneHours: 42.5,
+            unbookableGapPercent: 7.6,
+            minimumSellableMinutes: 70,
+          },
         },
         totals: {
           reservationCount: 8,
@@ -238,6 +247,8 @@ async function openDynamicPricingPanel(page: Page) {
   await nav.getByRole("button", { name: /Precio dinámico/ }).click();
   const pricingPerformance = page.locator(".pricing-performance");
   await expect(pricingPerformance).toContainText("$4.800");
+  await expect(pricingPerformance).toContainText("Ocupación y fragmentación histórica");
+  await expect(pricingPerformance).toContainText("55,7%");
   return pricingPerformance;
 }
 

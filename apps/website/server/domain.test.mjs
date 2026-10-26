@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  availableLaneIntervals,
   availableLaneHours,
   calculateQuote,
   chooseClosest,
@@ -141,6 +142,32 @@ test("available lane-hours respect overnight schedules and subtract merged maint
   });
 
   assert.equal(available, 2.5);
+  assert.deepEqual(
+    availableLaneIntervals({
+      fromMs,
+      toMs,
+      weeklyHours,
+      activeLaneIds: [1, 2, 2],
+      maintenanceBlocks: [
+        {
+          laneId: 1,
+          startMs: localDateTimeToEpoch("2026-10-25T00:30"),
+          endMs: localDateTimeToEpoch("2026-10-25T01:30"),
+        },
+        {
+          laneId: null,
+          startMs: localDateTimeToEpoch("2026-10-25T01:00"),
+          endMs: localDateTimeToEpoch("2026-10-25T01:30"),
+        },
+      ],
+    }),
+    [
+      { laneId: 1, startMs: fromMs, endMs: fromMs + 30 * 60_000 },
+      { laneId: 1, startMs: fromMs + 90 * 60_000, endMs: toMs },
+      { laneId: 2, startMs: fromMs, endMs: fromMs + 60 * 60_000 },
+      { laneId: 2, startMs: fromMs + 90 * 60_000, endMs: toMs },
+    ],
+  );
   assert.equal(
     availableLaneHours({
       fromMs,

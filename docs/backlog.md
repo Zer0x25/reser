@@ -23,7 +23,6 @@ Seguimiento de mejoras de flujo, interfaz y cobertura identificadas al revisar e
 - [x] **Seguir las reservas hasta confirmación y pago.** Enlazar la cotización con una referencia interna a la reserva por hasta 90 días; mostrar confirmaciones, pagos completos actuales y pagos verificados netos de devoluciones.
 - [x] **Medir ingreso por pista-hora contratada.** Dividir los pagos verificados netos de reservas confirmadas no canceladas por las horas y pistas contratadas; no presentarlo como ingreso por pista-hora disponible.
 - [x] **Calcular ingreso por pista-hora disponible.** Dividir los pagos verificados netos por reservas en el período entre las horas abiertas de pistas activas, descontando mantenciones registradas. El horario configurado actual se usa para períodos históricos y puede hacer la estimación imprecisa si hubo cambios.
+- [x] **Historial de ocupación y fragmentación.** El panel mide horas reservadas sobre horas disponibles, y la proporción de capacidad en huecos menores a una reserva mínima de una hora más preparación. Considera reservas con asignación vigente y descuenta mantenciones.
 
-## Pendiente de medición
-
-- [ ] **Historial de ocupación y fragmentación.** Medir ocupación y huecos no vendibles con una ventana y una definición operativa acordadas.
+Los horarios, pistas activas, preparación y mantenciones se reconstruyen con la configuración actual; si cambiaron durante el período, la estimación histórica puede diferir de la operación real. La ocupación no incluye el tiempo de preparación en las horas reservadas; la fragmentación sí considera el intervalo asignado completo.

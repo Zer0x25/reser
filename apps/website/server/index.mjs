@@ -17,6 +17,7 @@ import {
 import {
   DYNAMIC_PRICING_MODES,
   DYNAMIC_PRICING_RULE_VERSION,
+  availableLaneIntervals,
   availableLaneHours,
   calculateQuote,
   findAlternatives,
@@ -46,6 +47,7 @@ import {
 } from "./db.mjs";
 import { summarizePricingFunnel } from "./pricing-funnel.mjs";
 import {
+  summarizeInventoryPerformance,
   summarizeOperationalPerformance,
   summarizePricingPerformance,
 } from "./pricing-performance.mjs";
@@ -2743,6 +2745,9 @@ async function handleApi(req, res, url) {
       )
       .all(from, to);
     const currentSettings = getSettings();
+    const capacityBufferMs = 36 * 60 * 60_000;
+    const capacityFrom = from - capacityBufferMs;
+    const capacityTo = to + capacityBufferMs;
     const activeLaneIds = db
       .prepare("SELECT id FROM lanes WHERE active=1 ORDER BY id")
       .all()
@@ -2759,7 +2764,7 @@ async function handleApi(req, res, url) {
                 )) AS endMs
          FROM maintenance_blocks b WHERE b.created_at<? AND b.end_ms>?`,
       )
-      .all(to, from);
+      .all(capacityTo, capacityFrom);
     const operatingRevenueClp = db
       .prepare(
         `SELECT COALESCE(SUM(CASE WHEN p.status='verified' THEN p.amount_clp
@@ -2776,6 +2781,31 @@ async function handleApi(req, res, url) {
       exceptions: currentSettings.exceptions,
       activeLaneIds,
       maintenanceBlocks,
+    });
+    const availableIntervals = availableLaneIntervals({
+      fromMs: capacityFrom,
+      toMs: capacityTo,
+      weeklyHours: currentSettings.weeklyHours,
+      exceptions: currentSettings.exceptions,
+      activeLaneIds,
+      maintenanceBlocks,
+    });
+    const inventoryReservations = db
+      .prepare(
+        `SELECT r.id AS reservationId,a.lane_id AS laneId,
+                r.start_ms AS reservationStartMs,MIN(r.end_ms,a.end_ms) AS reservationEndMs,
+                a.start_ms AS allocationStartMs,a.end_ms AS allocationEndMs
+         FROM allocations a JOIN reservations r ON r.id=a.reservation_id
+         WHERE a.active=1 AND r.commercial_status NOT IN ('cancelled','rejected')
+           AND a.start_ms<? AND a.end_ms>?`,
+      )
+      .all(capacityTo, capacityFrom);
+    const inventory = summarizeInventoryPerformance({
+      fromMs: from,
+      toMs: to,
+      availableIntervals,
+      reservations: inventoryReservations,
+      minimumSellableMinutes: 60 + currentSettings.preparationMinutes,
     });
     prunePricingFunnel(db, to);
     const funnelRows = db
@@ -2802,6 +2832,7 @@ async function handleApi(req, res, url) {
         verifiedRevenueClp: operatingRevenueClp,
         availableLaneHours: availableHours,
         activeLaneCount: activeLaneIds.length,
+        inventory,
       }),
       funnel: summarizePricingFunnel(funnelRows),
       ...summarizePricingPerformance(rows),

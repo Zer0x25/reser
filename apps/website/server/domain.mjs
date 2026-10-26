@@ -116,7 +116,7 @@ export function matchesHours(startMs, endMs, weeklyHours, exceptions = {}) {
   return Boolean(operatingHoursForInterval(startMs, endMs, weeklyHours, exceptions));
 }
 
-export function availableLaneHours({
+export function availableLaneIntervals({
   fromMs,
   toMs,
   weeklyHours,
@@ -124,15 +124,15 @@ export function availableLaneHours({
   activeLaneIds = [],
   maintenanceBlocks = [],
 }) {
-  if (!Number.isSafeInteger(fromMs) || !Number.isSafeInteger(toMs) || toMs <= fromMs) return 0;
+  if (!Number.isSafeInteger(fromMs) || !Number.isSafeInteger(toMs) || toMs <= fromMs) return [];
   const lanes = [...new Set(activeLaneIds)].filter(
     (laneId) => Number.isSafeInteger(laneId) && laneId > 0,
   );
-  if (lanes.length === 0) return 0;
+  if (lanes.length === 0) return [];
 
   const firstDate = shiftLocalDate(formatLocalDate(fromMs), -1);
   const lastDate = formatLocalDate(toMs - 1);
-  let totalMs = 0;
+  const available = [];
   for (let date = firstDate; date <= lastDate; date = shiftLocalDate(date, 1)) {
     let window;
     try {
@@ -154,25 +154,33 @@ export function availableLaneHours({
         }))
         .filter((block) => Number.isFinite(block.startMs) && block.endMs > block.startMs)
         .sort((a, b) => a.startMs - b.startMs);
-      let blockedMs = 0;
-      let mergedStart = null;
-      let mergedEnd = null;
+      let cursor = windowStart;
       for (const interval of intervals) {
-        if (mergedStart == null) {
-          mergedStart = interval.startMs;
-          mergedEnd = interval.endMs;
-        } else if (interval.startMs <= mergedEnd) {
-          mergedEnd = Math.max(mergedEnd, interval.endMs);
-        } else {
-          blockedMs += mergedEnd - mergedStart;
-          mergedStart = interval.startMs;
-          mergedEnd = interval.endMs;
-        }
+        if (interval.endMs <= cursor) continue;
+        if (interval.startMs > cursor)
+          available.push({ laneId, startMs: cursor, endMs: Math.min(windowEnd, interval.startMs) });
+        cursor = Math.max(cursor, interval.endMs);
+        if (cursor >= windowEnd) break;
       }
-      if (mergedStart != null) blockedMs += mergedEnd - mergedStart;
-      totalMs += Math.max(0, windowEnd - windowStart - blockedMs);
+      if (cursor < windowEnd) available.push({ laneId, startMs: cursor, endMs: windowEnd });
     }
   }
+
+  available.sort((a, b) => a.laneId - b.laneId || a.startMs - b.startMs || a.endMs - b.endMs);
+  const merged = [];
+  for (const interval of available) {
+    if (interval.endMs <= interval.startMs) continue;
+    const previous = merged.at(-1);
+    if (previous?.laneId === interval.laneId && interval.startMs <= previous.endMs)
+      previous.endMs = Math.max(previous.endMs, interval.endMs);
+    else merged.push({ ...interval });
+  }
+  return merged;
+}
+
+export function availableLaneHours(options) {
+  const intervals = availableLaneIntervals(options);
+  const totalMs = intervals.reduce((sum, interval) => sum + interval.endMs - interval.startMs, 0);
   return Number((totalMs / HOUR_MS).toFixed(4));
 }
 
